@@ -12,6 +12,7 @@ import { CompetencyMap, type Entity } from './components/CompetencyMap';
 import {
   startSession,
   submitAnswer,
+  analyzeVision,
   endSession,
   getSessionFeedback,
   getUserProfile,
@@ -47,6 +48,9 @@ const DEFAULT_EMOTION_BARS = [
   { label: 'Pace', value: 0, color: 'var(--fg)', bg: '' },
   { label: 'Hesitation', value: 0, color: 'var(--fg)', bg: '' },
 ];
+
+/** Session ends when this many questions are answered; report is shown automatically. */
+const TOTAL_QUESTIONS = 2;
 
 function modulateToEmotionBars(m: ModulateSummary | null, voicePacingScore?: number | null): typeof DEFAULT_EMOTION_BARS {
   if (!m) return DEFAULT_EMOTION_BARS;
@@ -91,6 +95,7 @@ function App() {
   const [questionNumber, setQuestionNumber] = useState(0);
   const [transcript, setTranscript] = useState('');
   const [feedbackText, setFeedbackText] = useState('');
+  const [visionFeedback, setVisionFeedback] = useState<string | null>(null);
   const [feedbackVisible, setFeedbackVisible] = useState(false);
   const [factCheck, setFactCheck] = useState<{ correct: boolean; text: string } | null>(null);
   const [emotionBars, setEmotionBars] = useState(DEFAULT_EMOTION_BARS);
@@ -133,6 +138,7 @@ function App() {
   const [graphExpanded, setGraphExpanded] = useState(false);
   const [graphData, setGraphData] = useState<SessionGraphResponse | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
+  const [graphError, setGraphError] = useState<string | null>(null);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const reportTriggerRef = useRef<HTMLButtonElement>(null);
@@ -201,6 +207,7 @@ function App() {
     setQuestionNumber(0);
     setTranscript('');
     setFeedbackText('');
+    setVisionFeedback(null);
     setFeedbackVisible(false);
     setFactCheck(null);
     setEmotionBars(DEFAULT_EMOTION_BARS);
@@ -223,6 +230,7 @@ function App() {
     setScoutExpanded(false);
     setGraphExpanded(false);
     setGraphData(null);
+    setGraphError(null);
     setScoutUpdates([]);
     setScoutStatus(null);
     setCompanyBrief(null);
@@ -230,7 +238,7 @@ function App() {
     setVoicePacingScore(null);
   }, []);
 
-  // -- Answer flow --
+  // -- Answer flow: metrics (confidence, stress, pace, etc.) are per-answer real values from the backend (Modulate when API key set; stub for demo). --
   const applyAnswerResponse = useCallback((r: AnswerResponse) => {
     setCurrentQuestion(r.next_question);
     setQuestionNumber(r.question_number);
@@ -278,13 +286,44 @@ function App() {
   }, [recording]);
 
   const handleRecorded = useCallback(
-    async (blob: Blob, durationSeconds: number) => {
+    async (blob: Blob, durationSeconds: number, videoFrameBase64?: string) => {
       if (!sessionId || sessionId === 'offline') return;
       setProcessing(true);
       setRecordSeconds(0);
       try {
-        const r = await submitAnswer(sessionId, blob, currentQuestion, durationSeconds);
+        const [r] = await Promise.all([
+          submitAnswer(sessionId, blob, currentQuestion, durationSeconds),
+          videoFrameBase64
+            ? analyzeVision(sessionId, videoFrameBase64).then((res) => {
+                setVisionFeedback(res.feedback);
+              }).catch((e) => {
+                console.error('Vision API failed:', e);
+                setVisionFeedback(e instanceof Error ? e.message : 'Could not analyze vision.');
+              })
+            : Promise.resolve(),
+        ]);
         applyAnswerResponse(r);
+        if (r.question_number > TOTAL_QUESTIONS) {
+          setReportModalOpen(true);
+          setReportLoading(true);
+          setSessionReport(null);
+          try {
+            const report = await getSessionFeedback(sessionId);
+            setSessionReport(report);
+          } catch (e) {
+            console.error('Session report failed', e);
+            const message = e instanceof Error ? e.message : 'Could not load report. Check backend and Fastino.';
+            setSessionReport({
+              session_id: sessionId,
+              overall_trend: message,
+              strengths: [],
+              focus_areas: [],
+              suggested_next_steps: [],
+            });
+          } finally {
+            setReportLoading(false);
+          }
+        }
       } catch (e) {
         console.error('Submit answer failed', e);
         setFeedbackText('Could not reach server. Try Run Demo or check backend.');
@@ -306,9 +345,10 @@ function App() {
       setSessionReport(report);
     } catch (e) {
       console.error('Session report failed', e);
+      const message = e instanceof Error ? e.message : 'Could not load report. Check backend and Fastino.';
       setSessionReport({
         session_id: sessionId,
-        overall_trend: 'Could not load report. Check backend and Fastino.',
+        overall_trend: message,
         strengths: [],
         focus_areas: [],
         suggested_next_steps: [],
@@ -362,13 +402,23 @@ function App() {
   const handleToggleGraph = useCallback(async () => {
     const next = !graphExpanded;
     setGraphExpanded(next);
-    const shouldFetch = next && sessionId && sessionId !== 'offline' && (!graphData || graphData.session_id !== sessionId);
+    const shouldFetch =
+      next &&
+      sessionId &&
+      sessionId !== 'offline' &&
+      (!graphData ||
+        graphData.session_id !== sessionId ||
+        (graphData.nodes.length === 0 && graphData.edges.length === 0));
     if (shouldFetch) {
       setGraphLoading(true);
+      setGraphError(null);
       try {
         const data = await getSessionGraph(sessionId);
         setGraphData(data);
-      } catch {
+        setGraphError(null);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : 'Failed to load graph';
+        setGraphError(message);
         setGraphData({ session_id: sessionId, nodes: [], edges: [] });
       } finally {
         setGraphLoading(false);
@@ -444,7 +494,7 @@ function App() {
               className="flex flex-col min-w-0 w-full max-w-5xl mx-auto"
               style={{ gap: 'var(--gap-section)' }}
             >
-            <SessionRow questionNumber={questionNumber} totalQuestions={4} role={`${levelLabel.charAt(0).toUpperCase() + levelLabel.slice(1)} ${roleLabel}`} company={companyLabel} />
+            <SessionRow questionNumber={questionNumber} totalQuestions={TOTAL_QUESTIONS} role={`${levelLabel.charAt(0).toUpperCase() + levelLabel.slice(1)} ${roleLabel}`} company={companyLabel} />
 
             {/* Primary: Question + Answer first for focus */}
             <QuestionCardLight
@@ -473,6 +523,7 @@ function App() {
               coachTone={coachTone}
               voicePacingScore={voicePacingScore}
               voiceCoachingTip={voiceCoachingTip}
+              visionFeedback={visionFeedback}
             />
 
             {/* Secondary: Yutori Scout (collapsible) */}
@@ -766,6 +817,8 @@ function App() {
                 <div className="pop-in" style={{ padding: '16px', fontFamily: 'var(--f)', fontSize: 13 }}>
                   {graphLoading ? (
                     <p>Loading graph…</p>
+                  ) : graphError ? (
+                    <p style={{ color: 'var(--fg)' }}>{graphError}</p>
                   ) : graphData && (graphData.nodes.length > 0 || graphData.edges.length > 0) ? (
                     <div>
                       <p style={{ marginBottom: 12, fontWeight: 600 }}>
@@ -810,7 +863,7 @@ function App() {
                     </p>
                   ) : (
                     <p>
-                      No graph data yet. Submit at least one answer (or use Demo answer) to see the context graph (Session → Answer → Entity / Decision) in Neo4j.
+                      No graph data for this session yet. Submit at least one answer in this session to see the context graph (Session → Answer → Entity / Decision).
                     </p>
                   )}
                 </div>

@@ -57,6 +57,8 @@ export interface AnswerResponse {
   extracted_entities?: { text: string; label: string }[];
   voice_coaching_tip?: string | null;
   voice_pacing_score?: number | null;
+  /** "modulate" = real per-answer metrics; "stub" = demo/fallback */
+  metrics_source?: 'modulate' | 'stub' | null;
 }
 
 export async function startSession(body: SessionStartRequest): Promise<SessionStartResponse> {
@@ -98,11 +100,24 @@ export interface SessionFeedbackReport {
   disputed_claims?: string[];
 }
 
-/** Post-session feedback from Fastino + optional LLM synthesis. */
+const REPORT_FETCH_TIMEOUT_MS = 28_000;
+
+/** Post-session feedback from Fastino + optional LLM synthesis. Times out after 28s so UI doesn't hang. */
 export async function getSessionFeedback(sessionId: string): Promise<SessionFeedbackReport> {
-  const res = await fetch(`${API_BASE}/session/${sessionId}/feedback`);
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REPORT_FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${API_BASE}/session/${sessionId}/feedback`, { signal: controller.signal });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new Error('Report took too long. Try again or check the backend.');
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 export interface SessionEndResponse {
@@ -181,11 +196,24 @@ export interface SessionGraphResponse {
   neo4j_configured?: boolean;
 }
 
-/** Neo4j session subgraph for the current session (proves graph is working). */
+const GRAPH_FETCH_TIMEOUT_MS = 15_000;
+
+/** Neo4j session subgraph for the current session (proves graph is working). Times out after 15s so UI doesn't hang. */
 export async function getSessionGraph(sessionId: string): Promise<SessionGraphResponse> {
-  const res = await fetch(`${API_BASE}/session/${sessionId}/graph`);
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), GRAPH_FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${API_BASE}/session/${sessionId}/graph`, { signal: controller.signal });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new Error('Graph request timed out. Try again or check the backend.');
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 export interface CompanyBriefResponse {
@@ -223,4 +251,33 @@ export async function triggerFinetuning(userId: string): Promise<FastinoFinetune
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
+}
+
+export interface VisionAnalyzeResponse {
+  feedback: string;
+}
+
+const VISION_FETCH_TIMEOUT_MS = 25_000;
+
+export async function analyzeVision(sessionId: string, base64Image: string): Promise<VisionAnalyzeResponse> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), VISION_FETCH_TIMEOUT_MS);
+  try {
+    const form = new FormData();
+    form.append('image_base64', base64Image);
+    const res = await fetch(`${API_BASE}/session/${sessionId}/vision-analyze`, {
+      method: 'POST',
+      body: form,
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new Error('Vision analysis timed out.');
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }

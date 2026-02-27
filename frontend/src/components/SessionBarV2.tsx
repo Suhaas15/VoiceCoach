@@ -4,7 +4,7 @@ interface SessionBarV2Props {
   totalQuestions?: number;
 }
 
-export function SessionBarV2({ questionNumber, totalQuestions = 4 }: SessionBarV2Props) {
+export function SessionBarV2({ questionNumber, totalQuestions = 2 }: SessionBarV2Props) {
   return (
     <div className="flex flex-wrap items-center gap-3">
       <div className="flex items-center gap-2 py-1.5 px-3.5 rounded-[20px] bg-[rgba(0,229,160,.08)] border border-[rgba(0,229,160,.2)] text-[0.7rem] font-bold text-[var(--mint)] uppercase tracking-wide">

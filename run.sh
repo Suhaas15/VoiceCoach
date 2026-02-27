@@ -15,14 +15,25 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Create Python 3.12 venv at project root if missing (required for Reka Vision / reka-api)
+if [ ! -d .venv ]; then
+  if command -v python3.12 &>/dev/null; then
+    echo "==> Creating .venv with python3.12..."
+    python3.12 -m venv .venv
+  else
+    echo "==> Creating .venv with python3 (Python 3.12 recommended for Reka Vision)..."
+    python3 -m venv .venv
+  fi
+fi
+
 echo "==> Installing backend dependencies..."
-pip install -q -r backend/requirements.txt
+.venv/bin/pip install -q -r backend/requirements.txt
 
 echo "==> Installing frontend dependencies..."
 (cd frontend && npm install --silent)
 
 echo "==> Starting backend on http://127.0.0.1:8000"
-(cd backend && uvicorn main:app --host 0.0.0.0 --port 8000) &
+(cd backend && ../.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000) &
 BACKEND_PID=$!
 sleep 2
 

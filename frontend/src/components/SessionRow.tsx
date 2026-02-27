@@ -7,7 +7,7 @@ interface SessionRowProps {
 
 export function SessionRow({
   questionNumber,
-  totalQuestions = 4,
+  totalQuestions = 2,
   role = 'Staff PM',
   company = 'Google',
 }: SessionRowProps) {

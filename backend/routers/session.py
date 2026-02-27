@@ -11,7 +11,7 @@ from models.session import (
     Tone,
 )
 from models.user import SessionState, SessionEndResponse, SessionFeedbackReport
-from services import claims, modulate, yutori, fastino, orchestrator, memory
+from services import claims, modulate, yutori, fastino, orchestrator, memory, vision
 
 logger = logging.getLogger(__name__)
 
@@ -172,11 +172,13 @@ async def get_scout_updates(session_id: str):
         state.user_id,
         scout_id,
     )
+    role = getattr(state, "role", None) or state.model_dump().get("role")
+    company = getattr(state, "company", None) or state.model_dump().get("company")
     # If scout_id is missing, fall back to demo-friendly stub updates and signal status for frontend
     if not scout_id:
-        updates = await yutori.get_scout_updates("", limit=3)
+        updates = await yutori.get_scout_updates("", limit=3, role=role, company=company)
         return {"updates": updates, "scout_status": "no_scout"}
-    updates = await yutori.get_scout_updates(scout_id, limit=3)
+    updates = await yutori.get_scout_updates(scout_id, limit=3, role=role, company=company)
     return {"updates": updates, "scout_status": "live"}
 
 
@@ -187,6 +189,8 @@ async def get_session_graph(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
     data = await memory.get_session_graph(session_id)
     data["neo4j_configured"] = memory.is_neo4j_configured()
+    node_count = len(data.get("nodes") or [])
+    logger.info("get_session_graph: session_id=%s nodes=%s neo4j_configured=%s", session_id, node_count, data.get("neo4j_configured"))
     return data
 
 
@@ -272,7 +276,34 @@ async def demo_answer(session_id: str = Form(...)):
         modulate_trend=state.modulate_history[-5:],
         voice_coaching_tip=voice_tip,
         voice_pacing_score=pacing_score,
+        metrics_source="stub",
     )
+
+
+# Max base64 payload size (e.g. ~6 MB decoded image) to avoid DoS / Reka limits
+VISION_MAX_BASE64_BYTES = 8 * 1024 * 1024
+
+
+@router.post("/{session_id}/vision-analyze")
+async def analyze_vision(session_id: str, image_base64: str = Form(...)):
+    """Analyze a single video frame for environment/posture via Reka Vision API."""
+    if session_id not in sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Strip data URI prefix if present
+    if "base64," in image_base64:
+        image_base64 = image_base64.split("base64,")[1]
+    image_base64 = (image_base64 or "").strip()
+    if not image_base64:
+        raise HTTPException(status_code=400, detail="No image data")
+    if len(image_base64) > VISION_MAX_BASE64_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="Image payload too large",
+        )
+
+    feedback = await vision.analyze_interview_frame(image_base64)
+    return {"feedback": feedback}
 
 
 @router.post("/answer", response_model=AnswerResponse)
@@ -386,4 +417,5 @@ async def submit_answer(
         extracted_entities=entities,
         voice_coaching_tip=voice_tip,
         voice_pacing_score=pacing_score,
+        metrics_source="modulate",
     )

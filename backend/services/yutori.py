@@ -56,7 +56,8 @@ async def verify_claim(claim: str) -> FactCheckResult:
                 return _stub_fact_check(claim)
 
             import asyncio
-            for _ in range(30):
+            # Cap polling so report generation doesn't hang (max ~24s per claim)
+            for _ in range(12):
                 await asyncio.sleep(2)
                 status_resp = await client.get(
                     f"{YUTORI_BASE}/research/tasks/{task_id}",
@@ -180,14 +181,20 @@ async def create_scout(role: str, company: str) -> str | None:
         return None
 
 
-async def get_scout_updates(scout_id: str, limit: int = 5) -> list[dict]:
+async def get_scout_updates(
+    scout_id: str,
+    limit: int = 5,
+    role: str | None = None,
+    company: str | None = None,
+) -> list[dict]:
     """
     Get recent updates from a Scout. Returns list of { title, url, summary }.
+    When returning stub (no key or no scout_id), role and company are used for demo-friendly copy.
     """
     if not YUTORI_API_KEY or not scout_id:
         if not YUTORI_API_KEY:
             logger.info("Yutori Scout stub: YUTORI_API_KEY not set; returning canned updates for demo.")
-        return _stub_scout_updates(limit)
+        return _stub_scout_updates(limit, role=role, company=company)
     try:
         import httpx
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -196,7 +203,7 @@ async def get_scout_updates(scout_id: str, limit: int = 5) -> list[dict]:
                 headers={"X-API-Key": YUTORI_API_KEY},
             )
             if not r.is_success:
-                return _stub_scout_updates(limit)
+                return _stub_scout_updates(limit, role=role, company=company)
             data = r.json()
             updates = data.get("updates", data) if isinstance(data, dict) else (data if isinstance(data, list) else [])
             out = []
@@ -208,21 +215,28 @@ async def get_scout_updates(scout_id: str, limit: int = 5) -> list[dict]:
                         "summary": (u.get("summary", u.get("content", "")) or "")[:200],
                     })
             if not out:
-                return _stub_scout_updates(limit)
+                return _stub_scout_updates(limit, role=role, company=company)
             return out
     except Exception:
         logger.exception("Yutori get_scout_updates failed.")
-        return _stub_scout_updates(limit)
+        return _stub_scout_updates(limit, role=role, company=company)
 
 
-def _stub_scout_updates(limit: int = 5) -> list[dict]:
+def _stub_scout_updates(
+    limit: int = 5,
+    role: str | None = None,
+    company: str | None = None,
+) -> list[dict]:
     """
     Demo-friendly canned updates so the Scout panel is never empty on stage.
+    Uses session role and company when provided so stub matches the user's choice (e.g. Google, not Meta).
     """
+    company_label = (company or "").strip() or "Company"
+    role_label = (role or "").strip() or "this role"
     base: list[dict] = [
         {
-            "title": "Meta data engineering interview tips",
-            "url": "https://www.metacareers.com",
+            "title": f"{company_label} {role_label} interview tips",
+            "url": f"https://www.google.com/search?q={company_label.replace(' ', '+')}+careers",
             "summary": "Focus on SQL, data modeling, and communication in cross-functional settings.",
         },
         {
@@ -232,8 +246,8 @@ def _stub_scout_updates(limit: int = 5) -> list[dict]:
         },
         {
             "title": "Company culture & leadership principles",
-            "url": "https://www.google.com/search?q=Meta+company+culture",
-            "summary": "Read about Meta's culture and leadership expectations before your round.",
+            "url": f"https://www.google.com/search?q={company_label.replace(' ', '+')}+company+culture",
+            "summary": f"Read about {company_label}'s culture and leadership expectations before your round.",
         },
     ]
     return base[: max(1, min(limit, len(base)))]

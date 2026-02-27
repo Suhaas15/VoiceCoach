@@ -286,9 +286,11 @@ async def get_session_graph(session_id: str) -> dict[str, Any]:
     """Return session subgraph for UI: nodes (Session, Answer, Entity, Decision) and edges. Stub when Neo4j disabled."""
     empty = {"nodes": [], "edges": [], "session_id": session_id}
     if not _neo4j_enabled():
+        logger.info("get_session_graph: Neo4j disabled (missing env); session_id=%s", session_id)
         return empty
     driver = _get_driver()
     if driver is None:
+        logger.info("get_session_graph: Neo4j driver not available; session_id=%s", session_id)
         return empty
     db = _env("NEO4J_DATABASE")
     try:
@@ -311,6 +313,7 @@ async def get_session_graph(session_id: str) -> dict[str, Any]:
             )
             rows = await res.data()
         if not rows:
+            logger.info("get_session_graph: Cypher returned 0 rows (no Session or Answers); session_id=%s", session_id)
             return {"nodes": [], "edges": [], "session_id": session_id}
 
         nodes: list[dict[str, Any]] = []

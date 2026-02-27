@@ -87,3 +87,4 @@ class AnswerResponse(BaseModel):
     extracted_entities: list[dict] = Field(default_factory=list)  # [{ text, label }, ...] from GLiNER-2
     voice_coaching_tip: Optional[str] = None  # Modulate-derived hint for judges
     voice_pacing_score: Optional[float] = None  # 0-100 from hesitations + stress
+    metrics_source: Optional[str] = None  # "modulate" = real per-answer; "stub" = demo/fallback

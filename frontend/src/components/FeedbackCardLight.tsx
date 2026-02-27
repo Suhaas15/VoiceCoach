@@ -4,6 +4,7 @@ interface FeedbackCardLightProps {
   coachTone?: string;
   voicePacingScore?: number | null;
   voiceCoachingTip?: string | null;
+  visionFeedback?: string | null;
 }
 
 export function FeedbackCardLight({
@@ -12,6 +13,7 @@ export function FeedbackCardLight({
   coachTone,
   voicePacingScore,
   voiceCoachingTip,
+  visionFeedback,
 }: FeedbackCardLightProps) {
   if (!visible) return null;
 
@@ -77,6 +79,27 @@ export function FeedbackCardLight({
         >
           {feedbackText}
         </div>
+
+        {/* Vision API summary */}
+        {visionFeedback && (
+          <div
+            className="break-words"
+            style={{
+              padding: '0 20px 18px 20px',
+              fontFamily: 'var(--f)',
+              fontSize: 13.5,
+              fontWeight: 500,
+              lineHeight: 1.65,
+              color: 'var(--blue)',
+              overflowWrap: 'break-word',
+              wordBreak: 'break-word',
+              fontStyle: 'italic',
+            }}
+          >
+            <span style={{ fontWeight: 700, fontStyle: 'normal' }}>Visual Impression: </span>
+            {visionFeedback}
+          </div>
+        )}
 
         {/* Voice pacing strip */}
         {(voicePacingScore != null || voiceCoachingTip) && (

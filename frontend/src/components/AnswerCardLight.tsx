@@ -24,28 +24,85 @@ export function AnswerCardLight({
   processing: boolean;
   onStartRecord: () => void;
   onStopRecord: () => void;
-  onRecorded: (blob: Blob, durationSeconds: number) => void;
+  onRecorded: (blob: Blob, durationSeconds: number, videoFrameBase64?: string) => void;
   onError?: (message: string) => void;
 }) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const startTimeRef = useRef<number>(0);
+  const snapshotFrameRef = useRef<string | undefined>(undefined);
+  const snapshotTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const captureSnapshot = () => {
+    if (videoRef.current && videoRef.current.videoWidth > 0) {
+      const canvas = document.createElement('canvas');
+      canvas.width = videoRef.current.videoWidth;
+      canvas.height = videoRef.current.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+        snapshotFrameRef.current = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+      }
+    }
+  };
 
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mr = new MediaRecorder(stream);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+
+      // Create a separate stream with ONLY the audio track for Modulate (avoid sending video to audio API)
+      const audioStream = new MediaStream(stream.getAudioTracks());
+      const mr = new MediaRecorder(audioStream);
+
+      // Offscreen video element to decode frames for snapshot (display:none would yield black frames)
+      if (!videoRef.current) {
+        const v = document.createElement('video');
+        v.autoplay = true;
+        v.muted = true;
+        v.playsInline = true;
+        v.style.position = 'absolute';
+        v.style.top = '-9999px';
+        v.style.left = '-9999px';
+        v.style.width = '320px';
+        v.style.height = '240px';
+        v.onloadedmetadata = () => {
+          v.play().catch((e) => console.warn('Video auto-play blocked', e));
+        };
+        document.body.appendChild(v);
+        videoRef.current = v;
+      }
+      videoRef.current.srcObject = stream;
+
       chunksRef.current = [];
       startTimeRef.current = Date.now();
+      snapshotFrameRef.current = undefined;
+
+      // Capture a candid mid-response frame 4 seconds into speaking
+      snapshotTimerRef.current = setTimeout(() => captureSnapshot(), 4000);
+
       mr.ondataavailable = (e) => {
         if (e.data.size) chunksRef.current.push(e.data);
       };
+
       mr.onstop = () => {
+        if (snapshotTimerRef.current) clearTimeout(snapshotTimerRef.current);
+        if (!snapshotFrameRef.current) captureSnapshot();
+        const finalFrameBase64 = snapshotFrameRef.current;
+
         stream.getTracks().forEach((t) => t.stop());
+        if (videoRef.current) {
+          videoRef.current.pause();
+          videoRef.current.removeAttribute('src');
+          videoRef.current.load();
+          videoRef.current.srcObject = null;
+        }
+
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
         const duration = Math.max(1, Math.floor((Date.now() - startTimeRef.current) / 1000));
-        onRecorded(blob, duration);
+        onRecorded(blob, duration, finalFrameBase64);
       };
+
       mr.start(200);
       mediaRecorderRef.current = mr;
       onStartRecord();
@@ -130,6 +187,47 @@ export function AnswerCardLight({
           <span style={{ color: '#888888', fontStyle: 'italic', fontSize: 13 }}>
             {placeholder}
           </span>
+        ) : recording ? (
+          <div className="flex justify-center" style={{ margin: '8px 0' }}>
+            <div
+              style={{
+                position: 'relative',
+                width: '200px',
+                height: '150px',
+                border: '3px solid var(--fg)',
+                background: 'var(--bg)',
+                borderRadius: '8px',
+                overflow: 'hidden',
+              }}
+            >
+              <video
+                ref={(v) => {
+                  if (v && videoRef.current?.srcObject) {
+                    v.srcObject = videoRef.current.srcObject;
+                    v.autoplay = true;
+                    v.muted = true;
+                    v.play().catch(() => {});
+                  }
+                }}
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: 4,
+                  right: 8,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  background: 'rgba(255,255,255,0.8)',
+                  padding: '2px 6px',
+                  color: 'var(--fg)',
+                  border: '1px solid var(--fg)',
+                }}
+              >
+                LIVE PREVIEW
+              </div>
+            </div>
+          </div>
         ) : (
           <span className="break-words">{transcript}</span>
         )}
