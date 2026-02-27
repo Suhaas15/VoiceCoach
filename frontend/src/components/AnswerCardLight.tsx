@@ -135,8 +135,8 @@ export function AnswerCardLight({
         )}
       </div>
 
-      {/* Fact check */}
-      {factCheck && (
+      {/* Fact check: only show when we actually ran a check (not deferred to report) */}
+      {factCheck && factCheck.text !== 'Fact-check in session report' && (
         <span
           className="inline-flex items-center gap-1.5 pop-in"
           style={{

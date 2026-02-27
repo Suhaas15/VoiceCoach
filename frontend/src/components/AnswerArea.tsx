@@ -90,7 +90,7 @@ export function AnswerArea({
           <span className="text-[var(--muted)] italic text-[0.85rem]">{placeholder}</span>
         )}
       </div>
-      {factCheck && (
+      {factCheck && factCheck.text !== 'Fact-check in session report' && (
         <div
           className={`inline-flex items-center gap-1.5 py-1.5 px-3.5 rounded-[20px] text-[0.68rem] font-bold ${
             factCheck.correct

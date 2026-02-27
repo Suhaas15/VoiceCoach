@@ -99,7 +99,8 @@ async def analyze_voice(audio_bytes: bytes, session_ctx: dict | None = None) -> 
             ssl_mode,
         )
 
-        # Build WebSocket URL with query params as per docs
+        # Build WebSocket URL with query params as per docs.
+        # Request English transcription when supported by the API.
         url = (
             f"{MODULATE_STREAMING_URL}"
             f"?api_key={api_key}"
@@ -107,6 +108,7 @@ async def analyze_voice(audio_bytes: bytes, session_ctx: dict | None = None) -> 
             f"&emotion_signal=true"
             f"&accent_signal=true"
             f"&pii_phi_tagging=false"
+            f"&language=en"
         )
 
         CHUNK_SIZE = 8192
