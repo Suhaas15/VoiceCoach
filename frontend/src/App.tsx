@@ -46,13 +46,16 @@ const DEFAULT_EMOTION_BARS = [
   { label: 'Hesitation', value: 0, color: 'var(--fg)', bg: '' },
 ];
 
-function modulateToEmotionBars(m: ModulateSummary | null): typeof DEFAULT_EMOTION_BARS {
+function modulateToEmotionBars(m: ModulateSummary | null, voicePacingScore?: number | null): typeof DEFAULT_EMOTION_BARS {
   if (!m) return DEFAULT_EMOTION_BARS;
   const conf = Math.round((m.confidence_score ?? 0.72) * 100);
   const stress = Math.round((m.stress_score ?? 0.28) * 100);
   const clarity = Math.max(50, Math.min(100, 85 - (m.hesitation_count ?? 0) * 5));
-  const pace = 50 + Math.round((1 - (m.stress_score ?? 0.3)) * 35);
-  const hesit = Math.min(100, Math.max(0, (m.hesitation_count ?? 2) * 9));
+  const pace =
+    typeof voicePacingScore === 'number' && Number.isFinite(voicePacingScore)
+      ? Math.round(Math.max(0, Math.min(100, voicePacingScore)))
+      : 50 + Math.round((1 - (m.stress_score ?? 0.3)) * 35);
+  const hesit = Math.min(100, Math.max(0, (m.hesitation_count ?? 0) * 9));
   return [
     { label: 'Confidence', value: conf, color: 'var(--fg)', bg: '' },
     { label: 'Stress', value: stress, color: 'var(--fg)', bg: '' },
@@ -90,7 +93,6 @@ function App() {
   const [factCheck, setFactCheck] = useState<{ correct: boolean; text: string } | null>(null);
   const [emotionBars, setEmotionBars] = useState(DEFAULT_EMOTION_BARS);
   const [overallScore, setOverallScore] = useState(0);
-  const [factAccuracyPct, setFactAccuracyPct] = useState(0);
   const [vsLastSession, setVsLastSession] = useState(0);
   const [coachTone, setCoachTone] = useState<string>('');
   const [modulateTrend, setModulateTrend] = useState<Array<{ stress_score: number; confidence_score: number }>>([]);
@@ -120,6 +122,7 @@ function App() {
   const [scoutExpanded, setScoutExpanded] = useState(false);
   const [companyBriefExpanded, setCompanyBriefExpanded] = useState(false);
   const [scoutUpdates, setScoutUpdates] = useState<ScoutUpdate[]>([]);
+  const [scoutStatus, setScoutStatus] = useState<'live' | 'no_scout' | null>(null);
   const [scoutLoading, setScoutLoading] = useState(false);
   const [companyBrief, setCompanyBrief] = useState<CompanyBriefResponse | null>(null);
   const [briefLoading, setBriefLoading] = useState(false);
@@ -197,7 +200,6 @@ function App() {
     setFactCheck(null);
     setEmotionBars(DEFAULT_EMOTION_BARS);
     setOverallScore(0);
-    setFactAccuracyPct(0);
     setVsLastSession(0);
     setCoachTone('');
     setModulateTrend([]);
@@ -215,6 +217,7 @@ function App() {
     setEndReport(null);
     setScoutExpanded(false);
     setScoutUpdates([]);
+    setScoutStatus(null);
     setCompanyBrief(null);
     setVoiceCoachingTip(null);
     setVoicePacingScore(null);
@@ -239,14 +242,13 @@ function App() {
         : null
     );
     setTranscript(r.transcript);
-    setEmotionBars(modulateToEmotionBars(r.modulate_summary ?? null));
+    setEmotionBars(modulateToEmotionBars(r.modulate_summary ?? null, r.voice_pacing_score));
     if (r.overall_score != null) {
       setVsLastSession((prev) =>
         overallScore === 0 ? 0 : r.overall_score! - overallScore
       );
       setOverallScore(r.overall_score);
     }
-    if (r.fact_accuracy_pct != null) setFactAccuracyPct(r.fact_accuracy_pct);
     if (r.tone) setCoachTone(r.tone);
     if (r.modulate_trend && r.modulate_trend.length > 0) setModulateTrend(r.modulate_trend);
     if (r.extracted_entities) setExtractedEntities(r.extracted_entities);
@@ -338,10 +340,12 @@ function App() {
     if (next && sessionId && sessionId !== 'offline' && scoutUpdates.length === 0) {
       setScoutLoading(true);
       try {
-        const { updates } = await getScoutUpdates(sessionId);
+        const { updates, scout_status } = await getScoutUpdates(sessionId);
         setScoutUpdates(updates);
+        setScoutStatus(scout_status ?? null);
       } catch {
         setScoutUpdates([]);
+        setScoutStatus(null);
       } finally {
         setScoutLoading(false);
       }
@@ -409,7 +413,6 @@ function App() {
             speakBarsIdle={speakBarsIdle}
             modulateTrend={modulateTrend}
             overallScore={overallScore}
-            factAccuracyPct={factAccuracyPct}
             vsLastSession={vsLastSession}
           />
           <main className="app-shell-main flex flex-col items-center min-w-0 p-8 lg:p-12 overflow-x-hidden">
@@ -417,7 +420,7 @@ function App() {
               className="flex flex-col min-w-0 w-full max-w-5xl mx-auto"
               style={{ gap: 'var(--gap-section)' }}
             >
-            <SessionRow questionNumber={questionNumber} totalQuestions={8} role={`${levelLabel.charAt(0).toUpperCase() + levelLabel.slice(1)} ${roleLabel}`} company={companyLabel} />
+            <SessionRow questionNumber={questionNumber} totalQuestions={4} role={`${levelLabel.charAt(0).toUpperCase() + levelLabel.slice(1)} ${roleLabel}`} company={companyLabel} />
 
             {/* Primary: Question + Answer first for focus */}
             <QuestionCardLight
@@ -491,11 +494,17 @@ function App() {
                     <p>Loading updates…</p>
                   ) : scoutUpdates.length === 0 ? (
                     <p>
-                      No Yutori Scout updates yet. Start a session and wait a bit, or add your
-                      Yutori API key and billing to enable live scouting updates.
+                      {scoutStatus === 'live'
+                        ? 'No updates yet from your scout. Check back later.'
+                        : 'No Yutori Scout updates yet. Start a session and wait a bit, or add your Yutori API key and billing to enable live scouting updates.'}
                     </p>
                   ) : (
                     <div>
+                      {scoutStatus === 'no_scout' && (
+                        <p style={{ color: 'var(--muted)', marginBottom: 12, fontSize: 12 }}>
+                          Demo scout tips (Scout could not be created — check Yutori API key and billing).
+                        </p>
+                      )}
                       {scoutUpdates.map((u, i) => (
                         <div
                           key={i}

@@ -1,4 +1,5 @@
 """Session routes: start session, submit answer, end session, get status."""
+import logging
 import uuid
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from models.session import (
@@ -11,6 +12,8 @@ from models.session import (
 )
 from models.user import SessionState, SessionEndResponse, SessionFeedbackReport
 from services import claims, modulate, yutori, fastino, orchestrator, memory
+
+logger = logging.getLogger(__name__)
 
 # user_id -> scout_id so we reuse one scout per user
 _user_scout_ids: dict[str, str] = {}
@@ -43,6 +46,14 @@ async def start_session(body: SessionStart):
         scout_id = await yutori.create_scout(body.role, body.company)
         if scout_id:
             _user_scout_ids[body.user_id] = scout_id
+    logger.info(
+        "start_session: user_id=%s role=%s company=%s session_id=%s scout_id=%s",
+        body.user_id,
+        body.role,
+        body.company,
+        session_id,
+        scout_id,
+    )
 
     first_q = await orchestrator.generate_first_question(
         role=body.role,
@@ -155,10 +166,18 @@ async def get_scout_updates(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
     state = sessions[session_id]
     scout_id = getattr(state, "yutori_scout_id", None) or state.model_dump().get("yutori_scout_id")
+    logger.info(
+        "get_scout_updates: session_id=%s user_id=%s scout_id=%s",
+        session_id,
+        state.user_id,
+        scout_id,
+    )
+    # If scout_id is missing, fall back to demo-friendly stub updates and signal status for frontend
     if not scout_id:
-        return {"updates": []}
+        updates = await yutori.get_scout_updates("", limit=3)
+        return {"updates": updates, "scout_status": "no_scout"}
     updates = await yutori.get_scout_updates(scout_id, limit=3)
-    return {"updates": updates}
+    return {"updates": updates, "scout_status": "live"}
 
 
 def _deferred_fact_check(claim: str) -> FactCheckResult:

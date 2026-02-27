@@ -60,6 +60,16 @@ No uncaught errors in console; all sections render (empty or stub is OK).
 
 ---
 
+## Debugging Yutori Scout
+
+If the Scout panel always shows "No updates" or "Demo scout tips" despite having `YUTORI_API_KEY` set:
+
+1. **Verify the API:** From `backend/`, run `python scripts/verify_yutori_scout.py`. It creates a scout and fetches updates. If it prints `create_scout returned None`, check backend logs when starting a session for `Yutori create_scout failed: status=...` or `response missing scout_id/id`.
+2. **Check response shape:** If Yutori’s API returns a different field for the scout ID (e.g. `id` vs `scout_id`), update `backend/services/yutori.py` in `create_scout` to use the correct key.
+3. **Billing:** Ensure your Yutori account has billing enabled so the Scouts API is allowed.
+
+---
+
 ## Run path
 
 - **run.sh:** Installs backend (pip) and frontend (npm), starts backend on 8000 then frontend on 5173. Backend killed on Ctrl+C.

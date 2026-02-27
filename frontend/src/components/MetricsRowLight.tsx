@@ -1,17 +1,15 @@
 export function MetricsRowLight({
   overallScore,
-  factAccuracyPct,
   vsLastSession,
 }: {
   overallScore: number;
-  factAccuracyPct: number;
   vsLastSession: number;
 }) {
   const deltaLabel = vsLastSession >= 0 ? `+${vsLastSession}` : `${vsLastSession}`;
 
   return (
     <div
-      className="grid grid-cols-1 sm:grid-cols-3 gap-4"
+      className="grid grid-cols-1 sm:grid-cols-2 gap-4"
       role="region"
       aria-label="Session metrics"
     >
@@ -23,16 +21,6 @@ export function MetricsRowLight({
         valueColor="var(--red)"
         barColor="var(--red)"
         barWidth={overallScore}
-        showBar
-      />
-      <StatCard
-        label="Fact Accuracy"
-        icon="⚡"
-        iconBg="var(--blue)"
-        value={factAccuracyPct}
-        valueColor="var(--blue)"
-        barColor="var(--blue)"
-        barWidth={factAccuracyPct}
         showBar
       />
       <StatCard

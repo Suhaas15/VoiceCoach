@@ -1,5 +1,6 @@
 """Orchestrator: synthesize signals using Fastino, Yutori, and Modulate (OpenAI removed)."""
 import asyncio
+import re
 import random
 from models.session import (
     ModulateResult,
@@ -36,6 +37,86 @@ JD_FIRST_QUESTION_TEMPLATE = "Based on the {role} requirements for {company}, wa
 
 # When JD is long, use JD line this fraction of the time; otherwise use default.
 JD_FIRST_QUESTION_PROB = 0.5
+
+# Keywords that suggest a line is a requirement or responsibility (for JD parsing).
+_JD_TOPIC_KEYWORDS = (
+    "experience", "ability", "lead", "manage", "design", "communication",
+    "team", "required", "preferred", "responsibility", "skill", "cross-functional",
+    "stakeholder", "impact", "deliver", "ownership", "collaborat",
+)
+
+
+def _jd_topics(job_description: str) -> list[str]:
+    """
+    Extract requirement/topic phrases from job description (rule-based, no LLM).
+    Returns up to 8 short phrases suitable for turning into interview questions.
+    """
+    if not job_description or len(job_description.strip()) < 20:
+        return []
+    jd = job_description.strip()
+    # Split on newlines and common list separators
+    raw = re.split(r"\n|\r|\.\s+(?=[A-Z])", jd)
+    seen: set[str] = set()
+    out: list[str] = []
+    for line in raw:
+        # Normalize: strip, remove leading bullets/digits
+        line = re.sub(r"^[\s\-*•\d.)]+", "", line).strip()
+        if len(line) < 10 or len(line) > 150:
+            continue
+        line_lower = line.lower()
+        # Prefer lines that look like requirements
+        if any(kw in line_lower for kw in _JD_TOPIC_KEYWORDS) or "?" not in line:
+            key = line_lower[:50]
+            if key not in seen:
+                seen.add(key)
+                out.append(line)
+                if len(out) >= 8:
+                    break
+    # If we got no keyword matches, take first few sentences or lines as fallback
+    if not out and jd:
+        for part in re.split(r"\n|\.\s+", jd)[:5]:
+            part = part.strip()
+            if 15 <= len(part) <= 120 and part not in seen:
+                seen.add(part.lower()[:50])
+                out.append(part)
+                if len(out) >= 5:
+                    break
+    return out
+
+
+def _next_jd_question(session_state: dict, jd_topics: list[str], level: str, difficulty: str) -> str | None:
+    """
+    Pick an unused JD topic and return a question string, or None if all used.
+    Uses level for seniority wording and optionally difficulty for phrase variant.
+    """
+    if not jd_topics:
+        return None
+    questions_asked = session_state.get("questions_asked") or []
+    for topic in jd_topics:
+        # Consider topic "used" if any asked question already contains this topic (or its leading phrase)
+        sig = topic[:35].lower().strip()
+        if not sig:
+            continue
+        if any(sig in (q or "").lower() for q in questions_asked):
+            continue
+        break
+    else:
+        return None
+    level_lower = (level or "mid").lower()
+    difficulty_lower = (difficulty or "medium").lower()
+    # Truncate topic for the question if too long
+    x = topic[:80].strip() + ("…" if len(topic) > 80 else "")
+    if level_lower in ("senior", "staff", "principal"):
+        q = f"For a senior role, the job description emphasizes {x}. How have you demonstrated this at scale?"
+    elif level_lower in ("junior", "entry"):
+        q = f"The role calls for {x}. Can you tell us about a time you showed this, even early in your experience?"
+    else:
+        q = f"The job description mentions {x}. Can you share an example from your experience?"
+    if difficulty_lower.startswith("easy"):
+        q = "Give one concrete example. " + q
+    elif difficulty_lower.startswith("hard"):
+        q = "Walk me through a complex situation where this was critical. " + q
+    return q
 
 
 async def generate_first_question(
@@ -138,10 +219,21 @@ async def generate_next_question(
     if not yutori.correct and yutori.summary and "[Stub]" not in (yutori.summary or ""):
         feedback_note = feedback_note.rstrip() + " Yutori suggested verifying the claim or citing a source."
 
-    # 3. Determine next question from Yutori research, Neo4j history, or fallbacks
+    # 3. Determine next question: JD (if present) > company brief > entity coverage > fallback
     next_question = "Can you share another example of your work in this area?"
-    
-    if company_brief:
+    jd_q: str | None = None
+    jd_text = (session_state.get("job_description") or "").strip()
+    if len(jd_text) > 60:
+        topics = _jd_topics(jd_text)
+        jd_q = _next_jd_question(
+            session_state,
+            topics,
+            session_state.get("level") or "mid",
+            session_state.get("difficulty") or "medium",
+        )
+    if jd_q:
+        next_question = jd_q
+    elif company_brief:
         # Simple extraction of a requirement/hint to turn into a question
         lines = company_brief.split(";")
         if lines:
@@ -175,10 +267,30 @@ async def generate_next_question(
                     f"Tell me about a recent example that best shows this strength."
                 )
         if not company_brief and not label_counts and rag_snippets:
-            # Fallback to simple RAG-aware prompt if we have no entity data yet.
-            next_question = (
-                "Thinking back to your past experience, how would you handle a similar challenge today?"
-            )
+            # Fallback: make the question contextual using what they just answered or role/company.
+            role = (session_state.get("role") or "").strip() or "this role"
+            company = (session_state.get("company") or "").strip() or "this company"
+            prev = (current_question or "").strip()
+            if prev and len(prev) > 10:
+                # Shorten to a topic phrase (first sentence or first ~50 chars)
+                topic = prev.split(".")[0].strip() if "." in prev else prev[:60].strip()
+                if topic.endswith("?"):
+                    topic = topic[:-1].strip()
+                if len(topic) > 8:
+                    next_question = (
+                        f"You just spoke about {topic}. "
+                        "Can you share a specific example from your experience that relates to that—how did you handle it?"
+                    )
+                else:
+                    next_question = (
+                        f"For a {role} position at {company}, "
+                        "can you share a specific example from your experience and how you handled it?"
+                    )
+            else:
+                next_question = (
+                    f"For the {role} role at {company}, "
+                    "can you share a specific example from your experience where you faced a challenge and how you approached it?"
+                )
 
     return OrchestratorResponse(
         next_question=next_question,

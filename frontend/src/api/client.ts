@@ -144,8 +144,11 @@ export interface ScoutUpdate {
   summary: string;
 }
 
+/** Scout status: live = real scout; no_scout = creation failed or no key, showing demo tips. */
+export type ScoutStatus = 'live' | 'no_scout';
+
 /** Yutori Scout updates for this session (role/company). */
-export async function getScoutUpdates(sessionId: string): Promise<{ updates: ScoutUpdate[] }> {
+export async function getScoutUpdates(sessionId: string): Promise<{ updates: ScoutUpdate[]; scout_status?: ScoutStatus }> {
   const res = await fetch(`${API_BASE}/session/${sessionId}/scout-updates`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();

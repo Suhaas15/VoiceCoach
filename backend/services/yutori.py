@@ -159,9 +159,22 @@ async def create_scout(role: str, company: str) -> str | None:
                 json={"query": query},
             )
             if not r.is_success:
+                logger.warning(
+                    "Yutori create_scout failed: status=%s body_snippet=%s",
+                    r.status_code,
+                    (r.text or "")[:200],
+                )
                 return None
             data = r.json()
-            return data.get("scout_id") or data.get("id")
+            scout_id = data.get("scout_id") or data.get("id")
+            if not scout_id:
+                logger.warning(
+                    "Yutori create_scout: response missing scout_id/id. Raw keys: %s",
+                    list(data.keys()) if isinstance(data, dict) else type(data),
+                )
+                return None
+            logger.info("Yutori create_scout succeeded for role=%s company=%s scout_id=%s", role, company, scout_id)
+            return scout_id
     except Exception:
         logger.exception("Yutori create_scout failed.")
         return None

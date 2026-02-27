@@ -18,7 +18,6 @@ interface AriaAsideProps {
   speakBarsIdle: boolean;
   modulateTrend?: ModulateTrendPoint[]; // accepted but not currently rendered
   overallScore: number;
-  factAccuracyPct: number;
   vsLastSession: number;
   className?: string;
 }
@@ -30,7 +29,6 @@ export function AriaAside({
   emotionBars,
   speakBarsIdle,
   overallScore,
-  factAccuracyPct,
   vsLastSession,
   className,
 }: AriaAsideProps) {
@@ -200,7 +198,6 @@ export function AriaAside({
         >
           <MetricsRowLight
             overallScore={overallScore}
-            factAccuracyPct={factAccuracyPct}
             vsLastSession={vsLastSession}
           />
         </div>
