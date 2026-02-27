@@ -10,7 +10,7 @@ from models.session import (
     Tone,
 )
 from models.user import SessionState, SessionEndResponse, SessionFeedbackReport
-from services import modulate, yutori, fastino, orchestrator, memory
+from services import claims, modulate, yutori, fastino, orchestrator, memory
 
 # user_id -> scout_id so we reuse one scout per user
 _user_scout_ids: dict[str, str] = {}
@@ -161,15 +161,15 @@ async def get_scout_updates(session_id: str):
     return {"updates": updates}
 
 
-def _extract_claim_simple(transcript: str) -> str:
-    """Simple claim extraction: first sentence or first 100 chars. Can be replaced with LLM."""
-    t = (transcript or "").strip()
-    if not t:
-        return ""
-    for sep in ".!?":
-        if sep in t:
-            return t.split(sep)[0].strip() + sep
-    return t[:150] if len(t) > 150 else t
+def _deferred_fact_check(claim: str) -> FactCheckResult:
+    """Stub used when fact-check is deferred to session report (avoids per-answer Yutori call)."""
+    return FactCheckResult(
+        claim=claim or "",
+        correct=True,
+        summary="Fact-check in session report.",
+        actual_value=None,
+        source_url=None,
+    )
 
 
 @router.post("/demo-answer", response_model=AnswerResponse)
@@ -193,7 +193,7 @@ async def demo_answer(session_id: str = Form(...)):
         confidence_score=0.82,
         hesitation_count=1,
     )
-    stub_fact = FactCheckResult(claim="Stripe role", correct=True, summary="Verified")
+    stub_fact = _deferred_fact_check("Stripe role")
     history = getattr(state, "modulate_history", None) or state.model_dump().get("modulate_history", [])
     if not isinstance(history, list):
         history = []
@@ -225,7 +225,7 @@ async def submit_answer(
     audio: UploadFile = File(...),
 ):
     """
-    Submit audio answer. Runs Modulate -> Yutori fact-check -> Fastino ingest -> Orchestrator.
+    Submit audio answer. Runs Modulate -> Fastino ingest -> Orchestrator. Fact-check deferred to session report.
     Returns next question, feedback, and emotion summary.
     """
     if session_id not in sessions:
@@ -242,8 +242,8 @@ async def submit_answer(
     modulate_result = await modulate.analyze_voice(audio_bytes, {})
     transcript = modulate_result.transcript or "(no transcript)"
 
-    claim = _extract_claim_simple(transcript)
-    yutori_result = await yutori.verify_claim(claim)
+    claim = claims.extract_claim_simple(transcript)
+    yutori_result = _deferred_fact_check(claim)
 
     schema = fastino.default_gliner_schema(getattr(state, "role", None))
     entities = await fastino.extract_competencies(transcript, schema=schema)

@@ -10,6 +10,8 @@ class SessionFeedbackReport(BaseModel):
     strengths: list[str] = Field(default_factory=list)
     focus_areas: list[str] = Field(default_factory=list)
     suggested_next_steps: list[str] = Field(default_factory=list)
+    fact_check_summary: Optional[str] = None
+    disputed_claims: list[str] = Field(default_factory=list)
 
 
 class UserProfile(BaseModel):

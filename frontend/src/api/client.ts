@@ -94,6 +94,8 @@ export interface SessionFeedbackReport {
   strengths: string[];
   focus_areas: string[];
   suggested_next_steps: string[];
+  fact_check_summary?: string | null;
+  disputed_claims?: string[];
 }
 
 /** Post-session feedback from Fastino + optional LLM synthesis. */

@@ -277,6 +277,32 @@ async def ingest_decision(
         logger.exception("Neo4j ingest_decision failed.")
 
 
+async def get_session_transcripts(session_id: str) -> list[str]:
+    """Return transcripts for all answers in this session, ordered by question_number. Used for report-time fact-check."""
+    if not _neo4j_enabled():
+        return []
+    driver = _get_driver()
+    if driver is None:
+        return []
+    db = _env("NEO4J_DATABASE")
+    try:
+        async with driver.session(database=db) as session:
+            res = await session.run(
+                """
+                MATCH (s:Session {session_id: $session_id})-[:HAS_ANSWER]->(a:Answer)
+                WHERE a.transcript IS NOT NULL AND a.transcript <> ""
+                RETURN a.transcript AS transcript
+                ORDER BY a.question_number ASC
+                """,
+                session_id=session_id,
+            )
+            rows = await res.data()
+            return [r.get("transcript", "") for r in rows if r.get("transcript")]
+    except Exception:
+        logger.exception("Neo4j get_session_transcripts failed.")
+        return []
+
+
 async def get_rag_context(user_id: str, conversation: list, top_k: int = 5) -> list[str]:
     """Return last K answer transcripts (simple RAG substitute for demo)."""
     if not _neo4j_enabled():

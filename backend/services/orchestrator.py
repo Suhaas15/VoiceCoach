@@ -1,4 +1,5 @@
 """Orchestrator: synthesize signals using Fastino, Yutori, and Modulate (OpenAI removed)."""
+import asyncio
 import random
 from models.session import (
     ModulateResult,
@@ -8,7 +9,7 @@ from models.session import (
     Level,
     Tone,
 )
-from services import memory
+from services import claims, memory, yutori
 
 
 # First question is always this; rest of the session is dynamic (company brief, RAG, etc.).
@@ -197,15 +198,50 @@ async def generate_session_report(
 ) -> dict:
     """
     Synthesize report using Fastino's personalization capabilities.
+    Run Yutori fact-check on all session answers here (deferred from per-answer).
     """
     # Use Fastino to summarize the performance
     summary = await memory.get_user_context(
-        user_id, 
+        user_id,
         "Generate a structured interview summary: 2 strengths and 2 focus areas."
     )
-    
+
     if not summary or "[Stub]" in summary:
         summary = "Session complete. Your confidence trend was positive."
+
+    # Fact-check at report time: get session transcripts, extract claims, verify in parallel
+    fact_check_summary: str | None = None
+    disputed_claims: list[str] = []
+    transcripts = await memory.get_session_transcripts(session_id)
+    claims_to_check = []
+    for t in transcripts:
+        c = (claims.extract_claim_simple(t) or "").strip()
+        if c and len(c) >= 10:
+            claims_to_check.append(c)
+    # Dedupe by claim text to avoid redundant API calls
+    claims_to_check = list(dict.fromkeys(claims_to_check))
+    if claims_to_check:
+        results = await asyncio.gather(
+            *[yutori.verify_claim(c) for c in claims_to_check],
+            return_exceptions=True,
+        )
+        verified = 0
+        for i, r in enumerate(results):
+            if isinstance(r, Exception):
+                disputed_claims.append((claims_to_check[i] or "")[:80] + ("…" if len(claims_to_check[i] or "") > 80 else ""))
+                continue
+            if getattr(r, "correct", True):
+                verified += 1
+            else:
+                line = (getattr(r, "summary", None) or getattr(r, "actual_value", None) or (claims_to_check[i] or "")[:80])
+                if line and "[Stub]" not in str(line):
+                    disputed_claims.append(line[:200])
+        total = len(claims_to_check)
+        fact_check_summary = f"{verified} of {total} claims verified."
+        if disputed_claims:
+            fact_check_summary += " Some claims need verification or a source."
+    else:
+        fact_check_summary = "No verifiable claims in this session." if transcripts else None
 
     return {
         "session_id": session_id,
@@ -213,6 +249,8 @@ async def generate_session_report(
         "strengths": ["Confident delivery" if session_state.get("question_count", 0) > 2 else "Clear transcript"],
         "focus_areas": ["Metric quantification"],
         "suggested_next_steps": ["Review Yutori research on company culture.", "Practice pacing with Modulate signals."],
+        "fact_check_summary": fact_check_summary,
+        "disputed_claims": disputed_claims,
     }
 
 

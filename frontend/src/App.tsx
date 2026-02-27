@@ -230,7 +230,11 @@ function App() {
       r.fact_check
         ? {
           correct: r.fact_check.correct,
-          text: r.fact_check.correct ? 'Yutori verified claim' : (r.fact_check.actual_value || 'Claim incorrect'),
+          text: (r.fact_check.summary && r.fact_check.summary.includes('session report'))
+            ? 'Fact-check in session report'
+            : r.fact_check.correct
+              ? 'Yutori verified claim'
+              : (r.fact_check.actual_value || 'Claim incorrect'),
         }
         : null
     );
@@ -873,6 +877,20 @@ function ReportContent({ report }: { report: SessionFeedbackReport }) {
       {report.strengths.length > 0 && <ReportSection title="Strengths" color="var(--btc)" items={report.strengths} />}
       {report.focus_areas.length > 0 && <ReportSection title="Focus areas" color="var(--gold)" items={report.focus_areas} />}
       {report.suggested_next_steps.length > 0 && <ReportSection title="Suggested next steps" color="var(--muted)" items={report.suggested_next_steps} />}
+      {report.fact_check_summary && (
+        <div>
+          <h3 style={{ fontFamily: 'var(--fm)', fontSize: 9, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'var(--cyan)', marginBottom: 6 }}>Yutori fact-check</h3>
+          <p className="break-words">{report.fact_check_summary}</p>
+          {report.disputed_claims && report.disputed_claims.length > 0 && (
+            <>
+              <p className="mt-2 text-sm" style={{ color: 'var(--muted)' }}>Claims to verify or cite:</p>
+              <ul className="list-disc pl-5 space-y-1 mt-1">
+                {report.disputed_claims.map((s, i) => <li key={i} className="break-words">{s}</li>)}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
