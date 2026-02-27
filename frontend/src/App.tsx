@@ -16,6 +16,7 @@ import {
   getSessionFeedback,
   getUserProfile,
   getScoutUpdates,
+  getSessionGraph,
   postCompanyBrief,
   triggerFinetuning,
   type AnswerResponse,
@@ -23,6 +24,7 @@ import {
   type SessionFeedbackReport,
   type UserProfileResponse,
   type ScoutUpdate,
+  type SessionGraphResponse,
   type CompanyBriefResponse,
   type FastinoFinetuneResponse,
 } from './api/client';
@@ -128,6 +130,9 @@ function App() {
   const [briefLoading, setBriefLoading] = useState(false);
   const [finetuneInfo, setFinetuneInfo] = useState<FastinoFinetuneResponse | null>(null);
   const [finetuneLoading, setFinetuneLoading] = useState(false);
+  const [graphExpanded, setGraphExpanded] = useState(false);
+  const [graphData, setGraphData] = useState<SessionGraphResponse | null>(null);
+  const [graphLoading, setGraphLoading] = useState(false);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const reportTriggerRef = useRef<HTMLButtonElement>(null);
@@ -216,6 +221,8 @@ function App() {
     setEndModalOpen(false);
     setEndReport(null);
     setScoutExpanded(false);
+    setGraphExpanded(false);
+    setGraphData(null);
     setScoutUpdates([]);
     setScoutStatus(null);
     setCompanyBrief(null);
@@ -351,6 +358,23 @@ function App() {
       }
     }
   }, [scoutExpanded, sessionId, scoutUpdates.length]);
+
+  const handleToggleGraph = useCallback(async () => {
+    const next = !graphExpanded;
+    setGraphExpanded(next);
+    const shouldFetch = next && sessionId && sessionId !== 'offline' && (!graphData || graphData.session_id !== sessionId);
+    if (shouldFetch) {
+      setGraphLoading(true);
+      try {
+        const data = await getSessionGraph(sessionId);
+        setGraphData(data);
+      } catch {
+        setGraphData({ session_id: sessionId, nodes: [], edges: [] });
+      } finally {
+        setGraphLoading(false);
+      }
+    }
+  }, [graphExpanded, sessionId, graphData]);
 
   const handleGetCompanyBrief = useCallback(async () => {
     if (!sessionConfig) return;
@@ -696,6 +720,98 @@ function App() {
                         </div>
                       )}
                     </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Neo4j context graph (collapsible) */}
+            <div
+              style={{
+                border: '3px solid var(--fg)',
+                background: 'var(--white)',
+                boxShadow: 'var(--sh4)',
+                marginTop: 16,
+              }}
+            >
+              <button
+                type="button"
+                onClick={handleToggleGraph}
+                aria-expanded={graphExpanded}
+                data-cursor="hover"
+                className="bauhaus-interactive w-full text-left flex justify-between items-center outline-none"
+                style={{
+                  padding: '12px 16px',
+                  fontFamily: 'var(--f)',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: '0.2em',
+                  textTransform: 'uppercase',
+                  borderBottom: graphExpanded ? '2px solid var(--fg)' : 'none',
+                  background: graphExpanded ? 'var(--muted)' : 'var(--white)',
+                }}
+              >
+                <span>Neo4j context graph</span>
+                <span
+                  style={{
+                    transition: 'transform 200ms ease-out',
+                    transform: graphExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                  }}
+                  aria-hidden
+                >
+                  ▼
+                </span>
+              </button>
+              {graphExpanded && (
+                <div className="pop-in" style={{ padding: '16px', fontFamily: 'var(--f)', fontSize: 13 }}>
+                  {graphLoading ? (
+                    <p>Loading graph…</p>
+                  ) : graphData && (graphData.nodes.length > 0 || graphData.edges.length > 0) ? (
+                    <div>
+                      <p style={{ marginBottom: 12, fontWeight: 600 }}>
+                        Session <code style={{ background: 'var(--muted)', padding: '2px 6px' }}>{graphData.session_id}</code>{' '}
+                        — {graphData.nodes.length} nodes, {graphData.edges.length} edges
+                      </p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        {graphData.nodes.map((n) => (
+                          <div
+                            key={n.id}
+                            style={{
+                              border: '2px solid var(--fg)',
+                              padding: '10px 12px',
+                              background: n.type === 'Session' ? 'var(--yellow)' : n.type === 'Answer' ? 'var(--white)' : 'var(--muted)',
+                            }}
+                          >
+                            <span style={{ fontWeight: 700, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+                              {n.type}
+                            </span>
+                            <div style={{ marginTop: 4 }}>
+                              {n.type === 'Session' && (n.role || n.company) && (
+                                <span>{[n.role, n.company].filter(Boolean).join(' · ')}</span>
+                              )}
+                              {n.type === 'Answer' && (
+                                <span>Q{n.question_number}: {(n.transcript_preview ?? '').slice(0, 60)}{(n.transcript_preview?.length ?? 0) > 60 ? '…' : ''}</span>
+                              )}
+                              {n.type === 'Entity' && <span>{n.label}: {n.text}</span>}
+                              {n.type === 'Decision' && <span>{n.next_question_preview}</span>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ marginTop: 12, fontSize: 11, color: 'var(--muted)' }}>
+                        Relationships: {[...new Set(graphData.edges.map((e) => e.type))].join(', ')}
+                      </div>
+                    </div>
+                  ) : graphData?.neo4j_configured === false ? (
+                    <p>
+                      Neo4j is not configured. Set <code style={{ background: 'var(--muted)', padding: '2px 4px' }}>NEO4J_URI</code>,{' '}
+                      <code style={{ background: 'var(--muted)', padding: '2px 4px' }}>NEO4J_USERNAME</code>, and{' '}
+                      <code style={{ background: 'var(--muted)', padding: '2px 4px' }}>NEO4J_PASSWORD</code> in <code style={{ background: 'var(--muted)', padding: '2px 4px' }}>backend/.env</code> to persist and view the context graph.
+                    </p>
+                  ) : (
+                    <p>
+                      No graph data yet. Submit at least one answer (or use Demo answer) to see the context graph (Session → Answer → Entity / Decision) in Neo4j.
+                    </p>
                   )}
                 </div>
               )}

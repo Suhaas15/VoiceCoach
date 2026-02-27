@@ -180,6 +180,16 @@ async def get_scout_updates(session_id: str):
     return {"updates": updates, "scout_status": "live"}
 
 
+@router.get("/{session_id}/graph")
+async def get_session_graph(session_id: str):
+    """Return Neo4j session subgraph (nodes and edges) for the current session. Shows context graph is working."""
+    if session_id not in sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+    data = await memory.get_session_graph(session_id)
+    data["neo4j_configured"] = memory.is_neo4j_configured()
+    return data
+
+
 def _deferred_fact_check(claim: str) -> FactCheckResult:
     """Stub used when fact-check is deferred to session report (avoids per-answer Yutori call)."""
     return FactCheckResult(
@@ -196,15 +206,13 @@ async def demo_answer(session_id: str = Form(...)):
     """
     Return a canned answer response for demo mode (no audio).
     Use when "Demo answer" is clicked so judges see full UX without speaking.
+    Also ingests to Neo4j so the context graph is populated for the graph panel.
     """
     if session_id not in sessions:
         raise HTTPException(status_code=404, detail="Session not found")
     state = sessions[session_id]
-    state.question_count += 1
+    q_num = state.question_count
     next_q = "You mentioned your approach — what specific outcome did you achieve, and how did you measure it?"
-    state.current_question = next_q
-    state.questions_asked.append(next_q)
-    sessions[session_id] = state
     stub_modulate = ModulateResult(
         transcript="In my role at Stripe I led a cross-functional initiative without direct authority by aligning on the why first, then using data to shift conversations from opinion to evidence.",
         stress_score=0.28,
@@ -213,6 +221,37 @@ async def demo_answer(session_id: str = Form(...)):
         hesitation_count=1,
     )
     stub_fact = _deferred_fact_check("Stripe role")
+    await memory.ingest_answer(
+        user_id=state.user_id,
+        session_id=session_id,
+        role=state.role,
+        company=state.company,
+        question_number=q_num,
+        question=state.current_question,
+        transcript=stub_modulate.transcript,
+        duration_seconds=45,
+        stress=stub_modulate.stress_score,
+        confidence=stub_modulate.confidence_score,
+        yutori_correct=stub_fact.correct,
+        extracted_entities=[],
+    )
+    await memory.ingest_decision(
+        user_id=state.user_id,
+        session_id=session_id,
+        question_number=q_num,
+        tone=str(Tone.SUPPORTIVE),
+        difficulty_delta=0,
+        next_question=next_q,
+        feedback_note="Solid structure. Consider quantifying the impact — what measurably changed?",
+        reasoning=None,
+        stress=stub_modulate.stress_score,
+        confidence=stub_modulate.confidence_score,
+        yutori_correct=stub_fact.correct,
+    )
+    state.question_count += 1
+    state.current_question = next_q
+    state.questions_asked.append(next_q)
+    sessions[session_id] = state
     history = getattr(state, "modulate_history", None) or state.model_dump().get("modulate_history", [])
     if not isinstance(history, list):
         history = []

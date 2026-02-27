@@ -28,6 +28,11 @@ def _neo4j_enabled() -> bool:
     return enabled
 
 
+def is_neo4j_configured() -> bool:
+    """Public check for UI: whether Neo4j is configured so the context graph can be persisted and shown."""
+    return _neo4j_enabled()
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -275,6 +280,106 @@ async def ingest_decision(
             )
     except Exception:
         logger.exception("Neo4j ingest_decision failed.")
+
+
+async def get_session_graph(session_id: str) -> dict[str, Any]:
+    """Return session subgraph for UI: nodes (Session, Answer, Entity, Decision) and edges. Stub when Neo4j disabled."""
+    empty = {"nodes": [], "edges": [], "session_id": session_id}
+    if not _neo4j_enabled():
+        return empty
+    driver = _get_driver()
+    if driver is None:
+        return empty
+    db = _env("NEO4J_DATABASE")
+    try:
+        async with driver.session(database=db) as session:
+            # Session and answers
+            res = await session.run(
+                """
+                MATCH (s:Session {session_id: $session_id})
+                OPTIONAL MATCH (s)-[:HAS_ANSWER]->(a:Answer)
+                WITH s, a ORDER BY a.question_number ASC
+                OPTIONAL MATCH (a)-[:MENTIONS]->(e:Entity)
+                WITH s, a, collect(DISTINCT e) AS entity_list
+                OPTIONAL MATCH (a)-[:LED_TO]->(d:Decision)
+                RETURN s.session_id AS sid, s.role AS role, s.company AS company,
+                       a.answer_id AS aid, a.question_number AS qnum, a.transcript AS transcript,
+                       entity_list,
+                       d.decision_id AS did, d.next_question AS next_q
+                """,
+                session_id=session_id,
+            )
+            rows = await res.data()
+        if not rows:
+            return {"nodes": [], "edges": [], "session_id": session_id}
+
+        nodes: list[dict[str, Any]] = []
+        edges: list[dict[str, str]] = []
+        seen_nodes: set[str] = set()
+        seen_edges: set[tuple[str, str, str]] = set()
+
+        def add_edge(source: str, target: str, typ: str) -> None:
+            key = (source, target, typ)
+            if key not in seen_edges:
+                seen_edges.add(key)
+                edges.append({"source": source, "target": target, "type": typ})
+
+        for row in rows:
+            sid = row.get("sid")
+            if sid and sid not in seen_nodes:
+                seen_nodes.add(sid)
+                nodes.append({
+                    "id": sid,
+                    "type": "Session",
+                    "label": "Session",
+                    "role": row.get("role"),
+                    "company": row.get("company"),
+                })
+            aid = row.get("aid")
+            if aid and aid not in seen_nodes:
+                seen_nodes.add(aid)
+                transcript = (row.get("transcript") or "")[:80]
+                if len((row.get("transcript") or "")) > 80:
+                    transcript += "…"
+                nodes.append({
+                    "id": aid,
+                    "type": "Answer",
+                    "label": f"Answer Q{row.get('qnum', '?')}",
+                    "question_number": row.get("qnum"),
+                    "transcript_preview": transcript or "(no transcript)",
+                })
+                if sid:
+                    add_edge(sid, aid, "HAS_ANSWER")
+            for e in row.get("entity_list") or []:
+                if e is None:
+                    continue
+                _get = getattr(e, "get", lambda _: None)
+                lbl = _get("label") or "ENTITY"
+                txt = _get("text") or ""
+                eid = f"{lbl}:{txt}"[:80]
+                if eid not in seen_nodes:
+                    seen_nodes.add(eid)
+                    nodes.append({"id": eid, "type": "Entity", "label": lbl, "text": txt})
+                if aid:
+                    add_edge(aid, eid, "MENTIONS")
+            did = row.get("did")
+            if did and did not in seen_nodes:
+                seen_nodes.add(did)
+                next_q = (row.get("next_q") or "")[:60]
+                if len((row.get("next_q") or "")) > 60:
+                    next_q += "…"
+                nodes.append({
+                    "id": did,
+                    "type": "Decision",
+                    "label": "Decision",
+                    "next_question_preview": next_q or "(next question)",
+                })
+                if aid:
+                    add_edge(aid, did, "LED_TO")
+        return {"nodes": nodes, "edges": edges, "session_id": session_id}
+    except Exception:
+        logger.exception("Neo4j get_session_graph failed.")
+        return empty
 
 
 async def get_session_transcripts(session_id: str) -> list[str]:

@@ -7,6 +7,9 @@ logger = logging.getLogger(__name__)
 
 FASTINO_BASE = "https://api.fastino.ai"
 PIONEER_GLINER2_URL = "https://api.pioneer.ai/gliner-2"
+PIONEER_INFERENCE_URL = "https://api.pioneer.ai/v1/inference"
+# Fine-tuned VoiceCoach NER model (voicecoach-ner-v1) trained on interview-answer entity extraction
+VOICECOACH_NER_JOB_ID = "0035887e-8bea-4139-8947-dd54c433d413"
 
 
 def _get_fastino_api_key() -> str | None:
@@ -139,26 +142,59 @@ async def ingest_answer(
         logger.exception("Fastino ingest_answer failed.")
 
 
-async def extract_competencies(transcript: str, schema: list[str] | None = None) -> list:
-    """Use GLiNER-2 to extract structured entities from user answer.
+def _entities_response_to_flat(data: dict) -> list[dict]:
+    """Convert Pioneer inference result.entities (label -> list of spans) to flat [{"text", "label"}]."""
+    out: list[dict] = []
+    result = data.get("result") or data
+    entities = result.get("entities") if isinstance(result, dict) else None
+    if not isinstance(entities, dict):
+        return out
+    for label, spans in entities.items():
+        if not isinstance(spans, list):
+            continue
+        for s in spans:
+            if isinstance(s, str) and s.strip():
+                out.append({"text": s.strip(), "label": str(label)})
+    return out
 
-    GLiNER is zero-shot: callers can provide arbitrary labels via `schema`.
-    """
+
+async def extract_competencies(transcript: str, schema: list[str] | None = None) -> list:
+    """Extract structured entities from user answer using fine-tuned VoiceCoach NER model or base GLiNER-2."""
     pioneer_key = _get_pioneer_api_key()
     if not pioneer_key:
-        # Demo data for hackathon presentation
         logger.info("Pioneer/GLiNER stub: PIONEER_API_KEY not set; returning demo entities.")
         return [
             {"text": "Python", "label": "TECHNICAL_SKILL"},
             {"text": "Leadership", "label": "SOFT_SKILL"},
-            {"text": "FastAPI", "label": "FRAMEWORK"}
+            {"text": "FastAPI", "label": "FRAMEWORK"},
         ]
-    
+
+    labels = schema or default_gliner_schema()
     try:
         import httpx
-        labels = schema or default_gliner_schema()
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            # Prefer fine-tuned VoiceCoach NER model (Pioneer v1 inference API)
             r = await client.post(
+                PIONEER_INFERENCE_URL,
+                headers={
+                    "Authorization": f"Bearer {pioneer_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "task": "extract_entities",
+                    "text": transcript,
+                    "schema": labels,
+                    "job_id": VOICECOACH_NER_JOB_ID,
+                    "threshold": 0.5,
+                },
+            )
+            if r.is_success:
+                data = r.json()
+                flat = _entities_response_to_flat(data)
+                if flat:
+                    return flat
+            # Fallback: base GLiNER-2 endpoint (no job_id)
+            fallback = await client.post(
                 PIONEER_GLINER2_URL,
                 headers={
                     "Authorization": f"Bearer {pioneer_key}",
@@ -167,14 +203,22 @@ async def extract_competencies(transcript: str, schema: list[str] | None = None)
                 json={
                     "text": transcript,
                     "schema": labels,
-                    "threshold": 0.4
+                    "threshold": 0.4,
                 },
             )
-            if r.is_success:
-                return r.json().get("entities", [])
+            if fallback.is_success:
+                raw = fallback.json()
+                # Base API may return entities as list or under result.entities
+                entities = raw.get("entities")
+                if entities is None and isinstance(raw.get("result"), dict):
+                    entities = raw["result"].get("entities")
+                if isinstance(entities, list):
+                    return [{"text": e.get("text", ""), "label": e.get("label", "ENTITY")} for e in entities if e.get("text")]
+                if isinstance(entities, dict):
+                    return _entities_response_to_flat({"result": {"entities": entities}})
             return []
     except Exception:
-        logger.exception("Fastino extract_competencies failed (Pioneer GLiNER-2).")
+        logger.exception("Fastino extract_competencies failed (Pioneer).")
         return []
 
 

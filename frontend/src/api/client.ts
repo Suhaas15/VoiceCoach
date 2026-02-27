@@ -154,6 +154,40 @@ export async function getScoutUpdates(sessionId: string): Promise<{ updates: Sco
   return res.json();
 }
 
+/** Neo4j session graph: nodes and edges for the context graph (Session → Answer → Entity / Decision). */
+export interface SessionGraphNode {
+  id: string;
+  type: 'Session' | 'Answer' | 'Entity' | 'Decision';
+  label?: string;
+  role?: string;
+  company?: string;
+  question_number?: number;
+  transcript_preview?: string;
+  text?: string;
+  next_question_preview?: string;
+}
+
+export interface SessionGraphEdge {
+  source: string;
+  target: string;
+  type: string;
+}
+
+export interface SessionGraphResponse {
+  session_id: string;
+  nodes: SessionGraphNode[];
+  edges: SessionGraphEdge[];
+  /** When false, Neo4j env vars are not set; graph will stay empty until configured. */
+  neo4j_configured?: boolean;
+}
+
+/** Neo4j session subgraph for the current session (proves graph is working). */
+export async function getSessionGraph(sessionId: string): Promise<SessionGraphResponse> {
+  const res = await fetch(`${API_BASE}/session/${sessionId}/graph`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export interface CompanyBriefResponse {
   expectations: string[];
   hints: string[];

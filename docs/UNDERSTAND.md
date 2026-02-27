@@ -1,167 +1,147 @@
-# VoiceCoach — Understand Everything (Flow + Sponsors + Judge Q&A)
+# VoiceCoach — How It Works (For Judges & Your Team)
 
-One place to explain the app, each sponsor, and how to answer judge questions. Easy language, no code.
-
----
-
-## Part A — The big picture
-
-VoiceCoach is an **interview coach that adapts by itself**. You don’t pick “easy” or “hard” or “friendly” — the system decides from your voice and your answers.
-
-It combines four main pieces:
-
-- **Modulate** — voice intelligence (transcription + stress / confidence / emotion).
-- **Yutori** — live web (fact-check, company brief, scouting).
-- **Fastino Labs / Pioneer / GLiNER‑2** — entity extraction (what skills and concepts you mentioned).
-- **Neo4j** — the context graph that remembers answers and decisions over time (users, sessions, answers, entities, decisions).
-
-**Modulate** tells us how you said it: stress, confidence, hesitations.  
-**Yutori** checks what you said against the live web (fact-check) and reads what the company actually wants (company brief), plus optional ongoing scouting.  
-**Fastino Labs’ Pioneer / GLiNER‑2** pulls out competencies (e.g. technical skill, soft skill, framework, impact) from your words using zero‑shot labels.  
-**Neo4j** stores those answers, entities, and the coach’s decisions as a **context graph**, and we query it for history and trends so you can trace *why* the coach did what it did.
-
-Together they make the coach autonomous: it changes tone and difficulty from your voice, picks next questions from company brief or your graph history, and adds fact‑check feedback when something you said doesn’t match the web.
+Plain-language guide to the app and each sponsor. Use this to explain the demo and answer judge questions.
 
 ---
 
-## Part B — Flow (step-by-step)
+## What VoiceCoach Does
 
-1. **Session start**  
-   You pick role and company. The backend initializes you in the Neo4j context graph and may create a Yutori Scout for that role and company. The first question comes from the orchestrator (e.g. “Tell me about yourself…”).
+VoiceCoach is an **AI interview coach** that practices with you in real time. You pick a role and company, answer questions out loud, and the app:
 
-2. **Optional: Company brief**  
-   You (or the UI) can ask for a company brief. Yutori **Browsing** runs: it opens the company’s careers or job pages, finds a relevant role, and returns expectations, hints, and source URLs. That’s stored on the session and used later to choose the next question.
+- **Transcribes** what you said and analyzes your **voice** (stress, confidence, pace).
+- **Extracts** skills and competencies from your answers (e.g. “Python”, “led a team”, “12% improvement”).
+- **Checks** key claims against the web at the **end** of the session (fact-check in the report).
+- **Remembers** your answers and decisions in a graph so it can pick **follow-up questions** and show a **competency map**.
 
-3. **You record an answer**  
-   The frontend sends your audio to the backend.
+The coach **adapts by itself**: it changes tone (supportive / neutral / challenging) and difficulty from your voice and history. You don’t toggle “easy” or “hard” — the system decides.
 
-4. **Per-answer pipeline (in order)**  
-   - **Modulate:** Your audio is sent to Modulate’s Velma‑2 STT Batch API. We get transcript plus derived stress score, confidence score, and emotion signals. We also compute a short “voice coaching tip” and a “pacing score” for the UI.  
-   - **Yutori Research:** We take a short claim from the transcript (e.g. “I led a team of 10”) and ask Yutori to verify it against the live web: create a research task, poll until it’s done, then get correct/incorrect and optional summary/citations. We show this in the UI and, if the claim was wrong, add a line to the feedback (e.g. “Yutori suggested verifying the claim or citing a source”).  
-  - **Fastino Labs / Pioneer GLiNER‑2:** We call **GLiNER‑2** with a role‑aware `schema` (labels like TECHNICAL_SKILL, SOFT_SKILL, FRAMEWORK, IMPACT, CUSTOMER, MODEL, etc.). It returns entities which we both show in the Competency Map and store as structured context.  
-  - **Neo4j context graph:** For each answer we write:
-     - An `Answer` node (with transcript, stress, confidence, fact‑check status).  
-     - `Entity` nodes from GLiNER, linked via `[:MENTIONS]`.  
-     - A `Decision` node capturing what the coach did next (tone, difficulty change, next question, feedback text) linked from the answer via `[:LED_TO]` and chained via `[:PRECEDENT_FOR]` to earlier decisions.  
-   - **Orchestrator:** It reads recent Modulate history and Neo4j context. Then it combines:  
-     - **Tone and difficulty** from Modulate (and the last 3 answers). If 2+ of the last 3 are high stress → supportive + easier; if 2+ are high confidence and low stress → challenging + harder. Otherwise it uses single-answer rules (e.g. high confidence → challenging).  
-     - **Feedback text** from Fastino’s profile/query; if Yutori said the claim was wrong, we append a remediation line.  
-     - **Next question** from the Yutori company brief if we have it, otherwise from RAG/topics.
+---
 
-5. **What you see**  
-   You get the next question, feedback, tone (supportive/neutral/challenging), Modulate summary (stress/confidence bars), fact-check result, a short trend of the last few Modulate scores, GLiNER entities (competency map with counts by label), the voice tip + pacing score, and — behind the scenes — all of this is written into the Neo4j context graph.
+## The Four Sponsors (What Each Does)
 
-A simple view of the pipeline:
+We use **four** sponsor technologies. Here’s what each one does and how we use it.
 
-```mermaid
-flowchart LR
-  User[User] --> Record[Record answer]
-  Record --> Modulate[Modulate]
-  Modulate --> Yutori[Yutori Research/Browsing]
-  Yutori --> Gliner[GLiNER-2 Extraction]
-  Gliner --> Neo4j[Neo4j Context Graph]
-  Neo4j --> Orch[Orchestrator]
-  Orch --> Response[Response to user]
+### 1. Modulate — Your Voice
+
+**What it is:**  
+Modulate turns your **audio** into a **transcript** and gives us **voice signals**: how stressed you sound, how confident, and how clear (e.g. hesitations).
+
+**What we do with it:**
+- Every time you finish recording an answer, we send the audio to Modulate.
+- We get back: the **transcript** (text of what you said), **stress score**, **confidence score**, and **hesitation**-style signals.
+- We use those to:
+  - Show you **stress and confidence bars** and a **voice pacing** score in the UI.
+  - Decide the **coach’s tone** (e.g. if you sound stressed, we go more supportive; if you sound confident, we can go more challenging).
+  - Generate a short **voice tip** (e.g. “Steady delivery. Keep this pace.”).
+
+**In one sentence for judges:**  
+“Modulate gives us the transcript and voice signals from every answer; we use that to drive the coach’s tone and to show the user their stress, confidence, and pacing.”
+
+---
+
+### 2. Yutori — The Live Web
+
+**What it is:**  
+Yutori lets us use the **live web** in three ways: **fact-check** a claim, **browse** a company’s careers page to get expectations, and **scout** for ongoing tips.
+
+**What we do with it:**
+
+- **Fact-check:** We do **not** fact-check every answer during the session (that was slow). Instead, when you **end the session** or open the **session report**, we take all your answers, pull out short claims, and run Yutori fact-check on them. The report then shows something like “X of Y claims verified” and lists any that need a source. So fact-check happens **once at report time**, not after each question.
+- **Company brief (Browsing):** When you start a session (or ask for company insights), we can run Yutori Browsing to open the company’s careers or job pages, find the role, and get **expectations and hints**. We store that and use it to choose **follow-up questions** (e.g. “Regarding [expectation], how have you demonstrated this?”).
+- **Scouting:** We can create a “scout” for your role and company. The scout watches the web for relevant tips; we show those in the “Yutori Scout” panel. If the scout can’t be created (e.g. no key or billing), we still show demo tips so the panel isn’t empty.
+
+**In one sentence for judges:**  
+“Yutori gives us fact-check at report time, a company brief from the live web to shape questions, and optional scouting for live tips.”
+
+---
+
+### 3. Pioneer / Fastino — What You Said (Skills & Entities)
+
+**What it is:**  
+We use **Pioneer’s** API to run a **fine-tuned NER model** (voicecoach-ner-v1) that extracts **structured entities** from your interview answers: skills, frameworks, metrics, impact, etc.
+
+**What we do with it:**
+- After each answer we have a **transcript** (from Modulate). We send that text to Pioneer’s inference API with our **fine-tuned model** (trained on 297 interview-style examples with labels like TECHNICAL_SKILL, SOFT_SKILL, FRAMEWORK, METRIC, IMPACT).
+- The model returns **entities** grouped by label (e.g. “Python” as TECHNICAL_SKILL, “12%” as METRIC, “led a team of five” as SOFT_SKILL). We convert that into a simple list and use it in two places:
+  1. **Competency map in the UI** — we show the entities and counts by label so you see what skills and traits you’ve mentioned.
+  2. **Neo4j** — we store these entities linked to your answer so we can later ask follow-up questions about **under-covered** topics (e.g. if you’ve talked a lot about technical skills but little about impact, we might ask about impact).
+
+We also have **Fastino** for optional user registration and ingest (when the Fastino key is set); the main “extraction” path in the demo is **Pioneer’s fine-tuned model**.
+
+**In one sentence for judges:**  
+“We use Pioneer’s fine-tuned NER model to pull out skills, metrics, and competencies from every answer; that powers the competency map and helps us choose the next question from under-covered topics.”
+
+---
+
+### 4. Neo4j — Memory (Why We Did What We Did)
+
+**What it is:**  
+Neo4j is a **graph database**. We use it as the **memory** of the session: users, sessions, answers, entities, and the coach’s **decisions** (tone, next question, feedback).
+
+**What we do with it:**
+- For every **answer** we create an **Answer** node (transcript, stress, confidence, question, etc.) and link **Entity** nodes to it (the skills/frameworks we got from Pioneer).
+- For every **coach decision** we create a **Decision** node: what tone we chose, what the next question was, what feedback we gave, and why (e.g. “from company brief” or “from entity coverage”). Decisions are chained so we can trace “this question came from that answer.”
+- We **query** this graph to get things like: “How many answers so far? What are the top entity labels? What’s the user’s stress/confidence trend?” That feeds the **orchestrator** when it picks the next question and the **session report**.
+
+**In one sentence for judges:**  
+“Neo4j stores every answer and every coach decision in a graph so we can explain why we asked a question and show your competency profile over time.”
+
+---
+
+## How the Next Question Is Chosen (In Order)
+
+After each answer we need to pick the **next question**. We do it in this order (no LLM; rule-based):
+
+1. **Job description (JD)**  
+   If you pasted a job description when starting, we parse it into short “topics” (e.g. requirements, responsibilities). We pick the **next topic we haven’t asked about yet** and turn it into a question (e.g. “The job description mentions [X]. Can you share an example from your experience?”). Level (junior/mid/senior) and difficulty (easy/medium/hard) change the **wording** of the question.
+
+2. **Company brief (Yutori)**  
+   If we don’t have a JD topic to use but we **do** have a company brief from Yutori Browsing, we pick a random line from it (e.g. an expectation or hint) and ask: “Regarding [that], how have you demonstrated this in your past roles?”
+
+3. **Entity coverage (Pioneer + Neo4j)**  
+   If we still don’t have a question, we look at **how often you’ve mentioned each type of entity** (technical skill, soft skill, framework, impact, etc.) from your **past answers** (stored in Neo4j, originally extracted by Pioneer). We pick the **least-mentioned** type and ask: “Let’s focus on your [that topic]. Tell me about a recent example that best shows this strength.”
+
+4. **Fallback**  
+   If none of the above apply, we use the **question you just answered** or your **role and company** to form a generic follow-up (e.g. “You just spoke about [topic]. Can you share a specific example from your experience?” or “For the [role] role at [company], can you share a specific example where you faced a challenge?”).
+
+So: **JD first**, then **company brief**, then **entity coverage** from the fine-tuned model’s extractions, then **fallback**. The **Pioneer model** improves the quality of entities we store, so “entity coverage” questions are smarter.
+
+---
+
+## Flow in One Diagram
+
+```
+You record an answer
+    → Modulate: transcript + stress + confidence + pacing
+    → Pioneer (fine-tuned NER): entities (skills, metrics, frameworks, …)
+    → Neo4j: save answer + entities + later the decision
+    → Yutori: company brief (if we have it) used when choosing next question
+    → Orchestrator: pick tone from Modulate, next question from JD / brief / entities / fallback
+    → You see: next question, feedback, competency map, voice metrics
 ```
 
----
+At **report time** (when you end the session or open the report):
 
-## Part C — Sponsors: what each does, how we use it, what’s special
-
-### Modulate
-
-- **What it is**  
-  A voice analysis API. You send audio; it returns a transcript plus emotion, stress, confidence, hesitation (and optionally deception).
-
-- **What we use**  
-  We call Modulate’s **Velma‑2 STT Batch** endpoint (`POST https://modulate-developer-apis.com/api/velma-2-stt-batch`) with your audio as `upload_file` and options for emotion/accent signals. We use: **transcript** (for Yutori and GLiNER), and derived **stress_score** / **confidence_score** plus a pseudo **hesitation_count** to set **tone** (supportive / neutral / challenging) and **difficulty** (easier / harder). We also compute a **voice coaching tip** and **pacing score** from stress and hesitations for the UI.
-
-- **How we use it differently**  
-  We don’t just show metrics. We **drive autonomy**: the orchestrator changes coach behavior (tone + difficulty) from Modulate signals and a short history (last 3 answers). There is no “difficulty slider”; the system decides.
-
-- **Specialty**  
-  Sub-lexical cues—how you say it, not just what you say.
-
-- **Real-life example**  
-  Like a coach who notices you’re rushing or sounding tense and automatically softens the next question or gives you a breathing tip, instead of you clicking “easier mode.”
+- We run **Yutori fact-check** on claims from all your answers and show a short summary (e.g. “3 of 5 claims verified”) and any disputed claims.
 
 ---
 
-### Yutori
+## Short Answers for Judges
 
-- **What it is**  
-  Live web: **Research** (fact-check a claim), **Browsing** (navigate pages and extract info), **Scouting** (ongoing monitoring for a topic).
+- **“How do you use Modulate?”**  
+  We send every answer’s audio to Modulate and get back the transcript plus stress, confidence, and related signals. We use that to set the coach’s tone (supportive/neutral/challenging), show voice metrics and pacing in the UI, and give a short voice tip.
 
-- **What we use**  
-  - **Research:** We create a research task with the user’s claim, poll until it’s done, then get correct/incorrect and summary/citations. We show this in the UI and, if wrong, add a remediation line to the feedback.  
-  - **Browsing:** Company brief—a task that opens the company’s careers/job page, finds the role, and summarizes expectations and hints. We store expectations, hints, and source URLs and use them to generate the **next question** (orchestrator prefers company brief first).  
-  - **Scouting:** We create a scout per user for role + company and poll for updates; we show “Yutori is watching the web for you” and tips in the UI. If the Yutori API key or billing isn’t set, we fall back to demo updates in-app and the external Scouting dashboard will keep saying “No scouting tasks” until real scouts can be created.
+- **“How do you use Yutori?”**  
+  We use Yutori in three ways: (1) fact-check at **report time** (not per question), (2) company brief from Browsing to shape the next question, and (3) optional Scouting for live tips in the UI.
 
-- **How we use it differently**  
-  We use **three** Yutori products in one app: fact-check **per answer**, company brief to **shape questions**, and scout for **live tips**. Not just a single “search” call.
+- **“How do you use Pioneer / Fastino?”**  
+  We call Pioneer’s **fine-tuned NER model** (voicecoach-ner-v1) on every answer transcript to extract entities (skills, metrics, frameworks, impact, etc.). Those show up in the competency map and are stored in Neo4j so we can ask follow-ups about under-covered topics. Fastino is used for optional user/profile ingest when the key is set.
 
-- **Specialty**  
-  Real-time web: what’s true *now*, and what this company says *now*.
+- **“How do you use Neo4j?”**  
+  Neo4j is our session memory: we store every answer, the entities we extracted (from Pioneer), and every coach decision (tone, next question, feedback). We query it to pick the next question (e.g. by entity coverage) and to build the session report.
 
-- **Real-life example**  
-  Like having a researcher who checks your “I led a team of 10” claim against the web, and a separate assistant who just read the company’s job page and turns that into your next question.
+- **“Is the coach really autonomous?”**  
+  Yes. Tone and difficulty come from Modulate (and recent history). The next question comes from the job description, Yutori company brief, or Neo4j entity coverage — no human in the loop. Fact-check runs once in the report.
 
----
-
-### Neo4j
-
-- **What it is**  
-  A graph database. We use it as a **context graph** for users, sessions, answers, entities, and decisions.
-
-- **What we use**  
-  - **Users and sessions:** On session start we upsert a `User` node with role, company, level, difficulty, and a `Session` node linked via `[:HAS_SESSION]`.  
-  - **Answers:** Every answer becomes an `Answer` node with transcript, question, duration, stress, confidence, and whether Yutori said the claim was correct, linked via `[:HAS_ANSWER]`.  
-  - **Entities:** GLiNER‑2 entities are stored as `Entity` nodes (`label`, `text`) linked from answers via `[:MENTIONS]`.  
-  - **Decisions:** For each question we write a `Decision` node with tone, difficulty change, next question, feedback, and key signals; it links from the answer via `[:LED_TO]` and chains to prior decisions via `[:PRECEDENT_FOR]`.  
-  - **Profile / RAG:** We query Neo4j to build a short profile string (answer counts, average stress/confidence, top entity labels) and to fetch recent transcripts as a simple RAG context for the orchestrator and reports.
-
-- **How we use it differently**  
-  We treat **decisions as first-class nodes** and link them to answers and entities, so we can reconstruct *why* the coach changed tone or picked a question — not just what was asked.
-
-- **Specialty**  
-  Transparent, queryable memory: you can follow edges from a feedback line back to the exact answer, entities, and prior decisions that led to it.
-
-- **Real-life example**  
-  Like a coach who not only remembers what you said, but also keeps a graph of “this decision came from that answer mentioning these skills,” so you can audit the path later.
-
----
-
-### Fastino
-
-- **What it is**  
-  A personalization and memory API. In this build we primarily use its **Pioneer GLiNER‑2** integration for entity extraction, plus an optional finetuning hook.
-
-- **What we use**  
-  - **GLiNER‑2:** We extract competencies from the transcript (TECHNICAL_SKILL, SOFT_SKILL, FRAMEWORK, etc.) and show them in the UI (Competency Map + counts by label); the same entities are written into Neo4j as structured context.  
-  - **Optional Fastino ingest/profile (when keyed):** The service includes helpers to register users and ingest interview answers into Fastino with rich metadata (voice metrics, entities). With a `FASTINO_API_KEY` set, those routes can back more advanced profile/RAG use.  
-  - **Pioneer finetuning hook:** We expose a “Trigger Pioneer Optimization” button that simulates (or can trigger) GLiNER‑2 finetuning for this user’s profile.
-
-- **How we use it differently**  
-  We don’t just store plain text. We store **multi-sponsor context** (Modulate + Yutori + GLiNER) in Neo4j so future personalization can use voice and fact-check signals. GLiNER is used both for **real-time UI** (competency map) and for structured ingest (either in Neo4j alone, or Neo4j + Fastino when enabled).
-
-- **Specialty**  
-  Long-term memory plus structured extraction (skills, frameworks).
-
-- **Real-life example**  
-  Like a coach who remembers your last 10 answers, your stress patterns, and which skills you mentioned (e.g. “Python”, “leadership”), and uses that to choose the next question and feedback.
-
----
-
-## Part D — How to answer judges (short bullets)
-
-- **“How is Modulate used?”**  
-  Every answer’s audio is sent to Modulate; we get stress, confidence, hesitation, and transcript. Those drive **automatic** tone (supportive / neutral / challenging) and difficulty, plus a voice tip and pacing score in the UI. No manual setting.
-
-- **“How is Yutori used?”**  
-  **Research:** we fact-check a claim from each answer. **Browsing:** we fetch company expectations, hints, and source URLs and use them to pick the next question. **Scouting:** we run a scout per user and show live web tips.
-
-- **“How is Fastino used?”**  
-  We use Fastino’s Pioneer GLiNER‑2 to extract competencies and show them (with counts by label) in the UI. When a Fastino key is configured, we can also ingest answers and query profiles/RAG for richer personalization; the always-on context graph in this build is Neo4j.
-
-- **“What’s autonomous?”**  
-  Tone and difficulty are chosen from Modulate (and history). Next question comes from the Yutori company brief or Neo4j/RAG context. Feedback comes from the sponsor-native stack (Neo4j profile context plus Modulate/Yutori signals), with a Yutori remediation line when fact-check fails. No human in the loop.
+- **“Are you using the fine-tuned model?”**  
+  Yes. Every answer’s transcript is sent to Pioneer’s inference API with our **fine-tuned job ID** (voicecoach-ner-v1). If that call succeeds, we use its entities for the competency map and for Neo4j; if it fails, we fall back to the base GLiNER-2 endpoint.
