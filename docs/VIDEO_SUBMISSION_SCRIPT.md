@@ -7,7 +7,7 @@ Flow-wise script for a video submission. Each section describes what happens in 
 ## 1. Intro (5–10 seconds)
 
 **Say:**  
-"VoiceCoach is an AI interview coach that practices with you in real time. You pick a role and company, answer out loud, and the app transcribes your answer, analyzes your voice, extracts skills from what you said, and adapts the next question and tone—all using our sponsor stack: Modulate, Yutori, Pioneer/Fastino, and Neo4j."
+"VoiceCoach is an AI interview coach that practices with you in real time. You pick a role and company, answer out loud, and the app transcribes your answer, analyzes your voice, extracts skills from what you said, and gives visual feedback on your setup—all using our sponsor stack: Modulate, Yutori, Pioneer/Fastino, Neo4j, and Reka for vision."
 
 ---
 
@@ -24,6 +24,7 @@ User opens the app, lands on the setup screen, and enters role (e.g. "Software E
 | **Yutori** | When the session starts, we create a **scout** for this role and company (live web tips). In the background we kick off **Browsing** to hit the company’s careers/job pages and build a **company brief** (expectations, hints) for choosing follow-up questions later. |
 | **Modulate** | (Idle.) Will process each answer’s audio once the user starts recording. |
 | **Pioneer / Fastino** | (Idle.) Will run the fine-tuned NER on each answer transcript once answers are submitted. |
+| **Reka** | (Idle.) When the user records with video, we send a frame to Reka Vision for interview-style visual feedback (posture, lighting, background). |
 
 **Say:**  
 "On setup we choose role and company. Behind the scenes, Yutori starts a scout for live tips and runs Browsing to pull company expectations from the web. Neo4j is our memory layer—it will store every answer and every coach decision for this session."
@@ -43,6 +44,7 @@ Backend creates a session ID, registers the user in memory, and returns the **fi
 | **Neo4j** | User/session are registered; we’ll create Answer and Decision nodes as the user submits answers. |
 | **Modulate** | (Idle until first answer is submitted.) |
 | **Pioneer / Fastino** | (Idle until first answer is submitted.) |
+| **Reka** | (Idle until user submits an answer with a video frame.) |
 
 **Say:**  
 "The first question is generated from the role and company. Yutori’s Browsing is filling in a company brief in the background so we can tailor the next questions to that company’s expectations."
@@ -63,10 +65,10 @@ User records an answer (video optional). When they stop, the frontend sends the 
 | 3 | **Neo4j** | We **ingest** the answer: create an **Answer** node (transcript, stress, confidence, question, duration) and link **Entity** nodes (from Pioneer). Later we also create a **Decision** node (tone, next question, feedback, and reason—e.g. "from company brief" or "from entity coverage"). |
 | 4 | **Orchestrator** | (Not a sponsor—our logic.) Uses **Modulate** for tone; uses **job description**, **Yutori company brief**, and **Neo4j** (entity coverage, history) to pick the **next question** and feedback. |
 | 5 | **Yutori** | During the session, **no per-answer fact-check**. The company brief (from Browsing) is used by the orchestrator when choosing the next question. Fact-check runs **only at report time** (see below). |
-| (Optional) | **Reka Vision** | If a video frame was sent, we call Reka Vision for **visual feedback** (posture, lighting, background) and show it under "Visual Impression." (Not one of the four core sponsors in the doc; optional for the script.) |
+| 6 | **Reka** | If a **video frame** was sent with the answer, we call **Reka Vision** on that frame. Reka returns image-grounded feedback on posture, lighting, and background for an interview setting. We show this as **Visual Impression** in the UI (positive and constructive, based on what it actually sees). |
 
 **Say:**  
-"When you submit an answer, Modulate transcribes it and gives us stress and confidence—we use that to set the coach’s tone and show the voice bars. Pioneer’s fine-tuned model extracts skills and metrics from the transcript; those show up in the competency map and are stored in Neo4j. Neo4j saves the answer and the entities, and when we pick the next question we use the job description, Yutori’s company brief, or Neo4j’s entity coverage so we ask about under-covered topics. Yutori’s fact-check is run once at the end, not after every answer."
+"When you submit an answer, Modulate transcribes it and gives us stress and confidence—we use that to set the coach’s tone and show the voice bars. Pioneer’s fine-tuned model extracts skills and metrics from the transcript; those show up in the competency map and are stored in Neo4j. If you recorded with video, Reka Vision analyzes a frame and gives real visual feedback—posture, lighting, background—shown as Visual Impression. Neo4j saves the answer and the entities, and when we pick the next question we use the job description, Yutori’s company brief, or Neo4j’s entity coverage. Yutori’s fact-check is run once at the end, not after every answer."
 
 ---
 
@@ -83,9 +85,10 @@ UI shows: next question, text feedback, stress/confidence bars, voice pacing sco
 | **Pioneer / Fastino** | Competency map: entities (e.g. TECHNICAL_SKILL, METRIC, IMPACT) and counts. |
 | **Neo4j** | (Indirect.) Next question and feedback were chosen using Neo4j’s stored answers and entity coverage. |
 | **Yutori** | (Indirect.) Next question may have been chosen from the company brief. Scout tips in the Yutori panel (if visible). |
+| **Reka** | **Visual Impression** (if video was used): image-based feedback on posture, lighting, and background from Reka Vision. |
 
 **Say:**  
-"Here you see Modulate’s voice metrics and our voice tip, Pioneer’s entities in the competency map, and the next question—which can come from the job description, Yutori’s company brief, or from evening out coverage of skills and impact in Neo4j."
+"Here you see Modulate’s voice metrics and our voice tip, Pioneer’s entities in the competency map, and the next question—which can come from the job description, Yutori’s company brief, or from evening out coverage of skills and impact in Neo4j. If you had video on, Reka’s Visual Impression gives feedback on how you look on camera."
 
 ---
 
@@ -102,16 +105,17 @@ User ends the session. Frontend requests the **session report**. Backend aggrega
 | **Neo4j** | We **query** the graph for this session: answers, entities, decisions. That feeds the report (strengths, focus areas, trend) and any narrative we generate. |
 | **Pioneer / Fastino** | Entities and profile data in Neo4j came from Pioneer’s extractions; the report may reference competency coverage and weak/strong areas. |
 | **Modulate** | Stress/confidence history stored in Neo4j can be summarized in the report (e.g. trend over the session). |
+| **Reka** | (Not used at report time.) Visual feedback is per-answer only during the interview. |
 
 **Say:**  
-"When you end the session we build the report from Neo4j—your answers, entities, and the coach’s decisions. We then run Yutori fact-check on claims from all your answers and show how many were verified and what needs a source. So: Modulate for voice, Pioneer for skills and entities, Neo4j for memory and decisions, and Yutori for the live web—company brief and scout during the session, and fact-check in the report."
+"When you end the session we build the report from Neo4j—your answers, entities, and the coach’s decisions. We then run Yutori fact-check on claims from all your answers and show how many were verified and what needs a source. So: Modulate for voice, Reka for visual feedback on each answer, Pioneer for skills and entities, Neo4j for memory and decisions, and Yutori for the live web—company brief and scout during the session, and fact-check in the report."
 
 ---
 
 ## 7. Closing (5–10 seconds)
 
 **Say:**  
-"That’s VoiceCoach: flow-wise, Modulate handles voice, Yutori handles the live web and fact-check at report time, Pioneer and Fastino handle skill extraction and the competency map, and Neo4j is our memory so we can explain why we asked each question and show your progress. Thanks for watching."
+"That’s VoiceCoach: flow-wise, Modulate handles voice, Reka handles visual feedback on your interview setup, Yutori handles the live web and fact-check at report time, Pioneer and Fastino handle skill extraction and the competency map, and Neo4j is our memory so we can explain why we asked each question and show your progress. Thanks for watching."
 
 ---
 
@@ -120,6 +124,7 @@ User ends the session. Frontend requests the **session report**. Backend aggrega
 | Sponsor | One-line role in the flow |
 |--------|---------------------------|
 | **Modulate** | Every answer’s audio → transcript + stress/confidence + pacing; drives tone and voice UI. |
+| **Reka** | When video is used: one frame per answer → Reka Vision → image-grounded feedback (posture, lighting, background) shown as Visual Impression. |
 | **Yutori** | Scout + Browsing (company brief) during the session; fact-check on all claims at report time. |
 | **Pioneer / Fastino** | Every transcript → fine-tuned NER → entities for competency map and Neo4j; drives next-question choice by entity coverage. |
 | **Neo4j** | Stores every answer, entity, and coach decision; we query it for next-question choice and the session report. |
